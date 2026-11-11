@@ -21,3 +21,6 @@ Completed src/agent_orchestrator.py — All TODO items implemented (Tasks 2, 3, 
 Three Bedrock Knowledge Bases — Created in the AWS Console with synced data sources (Task 5)
 Populated .env file — With your Knowledge Base IDs, AgentCore Runtime ARN, and Guardrail configuration
 X-Ray Service Map screenshot — Showing the full trace of an end-to-end request through your multi-agent system (Task 6)
+
+## summary
+A production-grade multi-agent customer support system built with the Strands Agents SDK and Amazon Bedrock AgentCore. The system automatically routes customer support requests to specialist agents, retrieves grounded knowledge via parallel multi-agent RAG, enforces enterprise safety guardrails, and maintains shared workflow state across agents - all observable through CloudWatch and X-Ray.
