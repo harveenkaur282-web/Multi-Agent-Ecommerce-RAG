@@ -24,3 +24,6 @@ X-Ray Service Map screenshot — Showing the full trace of an end-to-end request
 
 ## summary
 A production-grade multi-agent customer support system built with the Strands Agents SDK and Amazon Bedrock AgentCore. The system automatically routes customer support requests to specialist agents, retrieves grounded knowledge via parallel multi-agent RAG, enforces enterprise safety guardrails, and maintains shared workflow state across agents - all observable through CloudWatch and X-Ray.
+
+## agent roles:
+![alt text](image-1.png)
