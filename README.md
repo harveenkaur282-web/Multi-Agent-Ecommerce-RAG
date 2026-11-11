@@ -9,6 +9,7 @@ The system consists of five AI agents working together in an Orchestrator → Wo
 3. A Policy Agent that answers policy questions using parallel multi-agent RAG across three Knowledge Bases
 4. A Refund Agent that makes return eligibility decisions based on order data and policy rules
 5. A Communication Agent that composes the final customer-facing response
+
 The system is deployed to AgentCore Runtime with Bedrock Guardrails for safety, session memory for multi-turn conversations, and CloudWatch/X-Ray observability for monitoring and debugging.
 
 ## Deliverables
