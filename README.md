@@ -27,3 +27,10 @@ A production-grade multi-agent customer support system built with the Strands Ag
 
 ## agent roles:
 ![alt text](image-1.png)
+
+## key features
+1. Multi-Agent RAG: PolicyAgent runs 3 specialized retriever sub-agents in parallel using ThreadPoolExecutor, merges results, and deduplicates by relevance
+2. Shared Workflow State: DynamoDB WorkflowStateTable with optimistic locking (version-based conditional writes) ensures consistency across concurrent agent updates
+3. Enterprise Guardrails: Bedrock Guardrails block harmful content, PII, and off-topic conversations
+4. Observability: Every request is traced to AWS X-Ray (Orchestrator → Worker → Knowledge Base call chain) and logged to CloudWatch Logs - locally and from the deployed runtime
+5. Bedrock Knowledge Bases: Uses an S3 Vectors backing store (vector bucket + one index per KB, created by the stack) for policy retrieval (no custom embeddings)
