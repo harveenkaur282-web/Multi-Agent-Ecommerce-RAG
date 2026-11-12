@@ -34,3 +34,6 @@ A production-grade multi-agent customer support system built with the Strands Ag
 3. Enterprise Guardrails: Bedrock Guardrails block harmful content, PII, and off-topic conversations
 4. Observability: Every request is traced to AWS X-Ray (Orchestrator → Worker → Knowledge Base call chain) and logged to CloudWatch Logs - locally and from the deployed runtime
 5. Bedrock Knowledge Bases: Uses an S3 Vectors backing store (vector bucket + one index per KB, created by the stack) for policy retrieval (no custom embeddings)
+
+## request flow scenerios 
+![alt text](image-3.png)
