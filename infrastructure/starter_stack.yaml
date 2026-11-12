@@ -1,0 +1,4 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Udacity Project - Enterprise Multi-Agent Architecture with Amazon Bedrock AgentCore
+  Infrastructure for DynamoDB, S3, S3 Vectors, IAM roles, and CloudWatch.
