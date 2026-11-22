@@ -1,7 +1,7 @@
 [project]
 name = "multi-agent-ecommerce-rag"
 version = "0.1.0"
-description = "Add your description here"
+description = "Reference project for a multi-agent e-commerce customer-support system"
 readme = "README.md"
 authors = [
     { name = "Harveen Kaur", email = "harveenkaur282@gmail.com" }

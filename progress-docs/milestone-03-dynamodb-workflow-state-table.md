@@ -42,6 +42,10 @@ The multi-agent architecture consists of an orchestrator and several specialist 
 
 The `session_id` partition key identifies one workflow or conversation session. It is the unique primary key for a single record in this table.
 
+The architecture graph shows the intended agents and their shared-state relationship. It is a design reference; the application agents are not implemented in the Python package yet.
+
+![Agent graph showing shared Workflow State](./images/agent-architecture.png)
+
 The table may store workflow values such as:
 
 - The customer identifier.

@@ -1,27 +1,19 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Udacity Project - Enterprise Multi-Agent Architecture with Amazon Bedrock AgentCore
-  Infrastructure for DynamoDB, S3, S3 Vectors, IAM roles, and CloudWatch.
+  Initial project infrastructure for customer, order, and workflow-state tables,
+  policy documents, and Bedrock Knowledge Base vector storage.
 
-
-
-# here parameters are the inputs that we can change at deploy time
 Parameters:
-  ProjectName: 
+  ProjectName:
     Type: String
     Default: udacity-agentcore
-    Description: prefix for all resource names and export names
+    Description: Prefix used for resource names.
 
-# --------------------------
-# DYNAMODB - Application Data
-# --------------------------
-
-
-# resources - the actual aws things required for the project
+# Application data and knowledge-base storage resources.
 Resources:
-  CustomersTable:              # a name you choose, used to refer to it elsewhere
-    Type: AWS::DynamoDB::Table # what kind of resource
-    Properties:               # settings for it
+  CustomersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
       TableName: !Sub '${ProjectName}-customers'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
@@ -29,7 +21,7 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: customer_id
-          KeyType: HASH  #HASH = partition key
+          KeyType: HASH
 
   OrdersTable:
     Type: AWS::DynamoDB::Table
@@ -47,20 +39,19 @@ Resources:
         - AttributeName: customer_id
           KeyType: HASH
         - AttributeName: order_id
-          KeyType: RANGE  #RANGE = sort key
+          KeyType: RANGE
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
   # Shared workflow state table.
-  # Each customer session gets one record here.
-  # Agents read and write to it as the orchestrator routes through them.
-  # version attribute enables optimistic locking (conditional writes).
+  # Each session has one record; application code can use a version attribute
+  # for optimistic locking.
   WorkflowStateTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: !Sub ${ProjectName}-workflow-state
+      TableName: !Sub '${ProjectName}-workflow-state'
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: session_id
@@ -72,9 +63,7 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
-  # ------------------------------------
-  # S3 - Policy Documents (KB data source + deployment artifacts)
-  # ------------------------------------
+  # Versioned, encrypted source documents for Bedrock Knowledge Bases.
   PolicyDocumentsBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -87,19 +76,10 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
-  
 
-   # ─────────────────────────────────────────────
-  # S3 VECTORS - Knowledge Base backing store (Task 5)
-  # ─────────────────────────────────────────────
-  # S3 Vectors is a separate service from general-purpose S3. A Bedrock
-  # Knowledge Base backed by S3 Vectors needs a *vector bucket* plus one
-  # *vector index* per Knowledge Base. All three are created here for selection
-  # in the Knowledge Base console wizard.
-  #
-  # Index settings match the Titan Embed Text v2 defaults used by the KBs:
-  #   dimension 1024, cosine distance, AMAZON_BEDROCK_TEXT non-filterable
-  #   (the chunk text is stored as metadata and must not be indexed).
+  # S3 Vectors backing store. Add an index for each Knowledge Base as needed.
+  # The Returns index uses 1024-dimensional cosine vectors and stores chunk
+  # text in non-filterable metadata.
 
   VectorStoreBucket:
     Type: AWS::S3Vectors::VectorBucket
@@ -119,7 +99,3 @@ Resources:
       MetadataConfiguration:
         NonFilterableMetadataKeys:
           - AMAZON_BEDROCK_TEXT
-
-
-
-# outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed

@@ -1,65 +1,96 @@
-# Multi-Agent-Ecommerce-RAG
+# Multi-Agent E-commerce RAG
 
-A production-grade multi-agent customer support system using Amazon Bedrock AgentCore and the Strands Agents SDK
+An AWS-based reference project for a multi-agent customer-support system. The design uses an orchestrator, specialist agents, shared DynamoDB workflow state, and parallel policy retrieval.
 
-## Progress Documentation
+> **Project status:** The architecture and CloudFormation infrastructure are being developed. The Python package is currently a scaffold; the agents, tools, and end-to-end runtime described below are not implemented yet.
 
-Progress milestones and deployment evidence are recorded in [`progress-docs/`](./progress-docs/):
+## Agent Architecture
 
-- [Milestone 1: Deploy the Customer DynamoDB Table](./progress-docs/milestone-01-dynamodb-customer-table.md)
-- [Milestone 2: Add the Orders DynamoDB Table](./progress-docs/milestone-02-dynamodb-orders-table.md)
-- [Milestone 3: Add the Workflow State DynamoDB Table](./progress-docs/milestone-03-dynamodb-workflow-state-table.md)
+The diagram shows the intended agent graph and how work and shared state flow through the system.
 
-## setup
+![Agent architecture graph](./progress-docs/images/agent-architecture.png)
 
-This project uses [uv](https://docs.astral.sh/uv/) for Python dependencies and virtual environments.
+The orchestrator routes customer requests to specialist agents:
 
-Install dependencies and create the project environment:
+| Component | Intended responsibility |
+|---|---|
+| Orchestrator | Classify and route requests; coordinate shared workflow state |
+| Inventory agent | Retrieve customer and order information |
+| Policy agent | Coordinate parallel retrieval from Returns, Shipping, and Warranty knowledge bases |
+| Refund agent | Evaluate return/refund eligibility |
+| Communication agent | Compose the final customer-facing response |
+| Workflow State table | Persist session state shared across agents |
+
+The graph is a design reference, not a claim that the agents or runtime are already operational.
+
+## Example Request Flows
+
+These scenarios illustrate how different requests may route through the planned agents.
+
+![Example request flow scenarios](./image-3.png)
+
+## Infrastructure
+
+The current CloudFormation template defines:
+
+- DynamoDB tables for customers, orders, and workflow state.
+- An encrypted, versioned S3 bucket for policy documents.
+- An S3 Vectors bucket and a Returns policy vector index.
+
+The template does not yet define the full runtime, IAM, guardrails, or observability stack. See the [CloudFormation template](./infrastructure/starter_stack.yaml) for its exact current resources.
+
+## Getting Started
+
+This repository uses [uv](https://docs.astral.sh/uv/) for Python dependencies and environments.
 
 ```powershell
 uv sync
 ```
 
-Run the project:
+Run the current package scaffold:
 
 ```powershell
 uv run multi-agent-ecommerce-rag
 ```
 
-When dependencies change, update the lockfile with `uv lock`. Do not use `pip install -r requirements.txt`; dependency declarations live in `pyproject.toml` and `uv.lock`.
+At present, the command prints a scaffold greeting; it does not run the agent graph.
 
-The system consists of five AI agents working together in an Orchestrator → Workers hierarchy:
+Validate the CloudFormation template:
 
-1. An Orchestrator Agent that understands customer intent and routes requests to the right specialist
-2. An Inventory Agent that retrieves order and customer data from DynamoDB
-3. A Policy Agent that answers policy questions using parallel multi-agent RAG across three Knowledge Bases
-4. A Refund Agent that makes return eligibility decisions based on order data and policy rules
-5. A Communication Agent that composes the final customer-facing response
+```powershell
+uv run cfn-lint infrastructure/starter_stack.yaml
+```
 
-The system is deployed to AgentCore Runtime with Bedrock Guardrails for safety, session memory for multi-turn conversations, and CloudWatch/X-Ray observability for monitoring and debugging.
-# architecture diagram
-![alt text](image.png)
+To deploy or update the AWS stack, configure AWS CLI credentials and select the intended account and region first:
 
-## Deliverables
-Need to submit:
+```powershell
+aws cloudformation deploy `
+  --template-file infrastructure/starter_stack.yaml `
+  --stack-name udacity-agentcore `
+  --region us-east-1 `
+  --capabilities CAPABILITY_NAMED_IAM
+```
 
-Completed src/agent_orchestrator.py — All TODO items implemented (Tasks 2, 3, 4, 6)
-Three Bedrock Knowledge Bases — Created in the AWS Console with synced data sources (Task 5)
-Populated .env file — With your Knowledge Base IDs, AgentCore Runtime ARN, and Guardrail configuration
-X-Ray Service Map screenshot — Showing the full trace of an end-to-end request through your multi-agent system (Task 6)
+Dependency declarations live in `pyproject.toml`; `uv.lock` records the resolved environment. After changing dependencies, run `uv lock` and `uv sync`.
 
-## summary
-A production-grade multi-agent customer support system built with the Strands Agents SDK and Amazon Bedrock AgentCore. The system automatically routes customer support requests to specialist agents, retrieves grounded knowledge via parallel multi-agent RAG, enforces enterprise safety guardrails, and maintains shared workflow state across agents - all observable through CloudWatch and X-Ray.
+## Project Layout
 
-## agent roles:
-![alt text](image-1.png)
+| Path | Purpose |
+|---|---|
+| `infrastructure/` | CloudFormation infrastructure |
+| `src/multi_agent_ecommerce_rag/` | Python package scaffold |
+| `progress-docs/` | Deployment milestones and evidence |
+| `theory+prep/` | Architecture notes and project preparation |
+| `agents&tools_reference.md` | Agent graph and role reference |
+| `pyproject.toml`, `uv.lock` | Project metadata and uv dependency lock |
 
-## key features
-1. Multi-Agent RAG: PolicyAgent runs 3 specialized retriever sub-agents in parallel using ThreadPoolExecutor, merges results, and deduplicates by relevance
-2. Shared Workflow State: DynamoDB WorkflowStateTable with optimistic locking (version-based conditional writes) ensures consistency across concurrent agent updates
-3. Enterprise Guardrails: Bedrock Guardrails block harmful content, PII, and off-topic conversations
-4. Observability: Every request is traced to AWS X-Ray (Orchestrator → Worker → Knowledge Base call chain) and logged to CloudWatch Logs - locally and from the deployed runtime
-5. Bedrock Knowledge Bases: Uses an S3 Vectors backing store (vector bucket + one index per KB, created by the stack) for policy retrieval (no custom embeddings)
+## Progress Documentation
 
-## request flow scenerios 
-![alt text](image-3.png)
+- [Milestone 1: Customer DynamoDB table](./progress-docs/milestone-01-dynamodb-customer-table.md)
+- [Milestone 2: Orders DynamoDB table](./progress-docs/milestone-02-dynamodb-orders-table.md)
+- [Milestone 3: Workflow State DynamoDB table](./progress-docs/milestone-03-dynamodb-workflow-state-table.md)
+
+## Related References
+
+- [Agent architecture and roles](./agents%26tools_reference.md)
+- [Architecture design notes](./theory%2Bprep/architectural_thinking.md)
