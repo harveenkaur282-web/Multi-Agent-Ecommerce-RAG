@@ -2,3 +2,11 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Udacity Project - Enterprise Multi-Agent Architecture with Amazon Bedrock AgentCore
   Infrastructure for DynamoDB, S3, S3 Vectors, IAM roles, and CloudWatch.
+
+Paramters:
+Resources:
+Outputs:
+
+# here parameters are the inputs that we can change at deploy time
+# resources - the actual aws things required for the project
+# outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed
