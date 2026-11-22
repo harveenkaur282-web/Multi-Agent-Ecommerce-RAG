@@ -3,7 +3,11 @@ Description: >
   Udacity Project - Enterprise Multi-Agent Architecture with Amazon Bedrock AgentCore
   Infrastructure for DynamoDB, S3, S3 Vectors, IAM roles, and CloudWatch.
 
-Paramters:
+Parameters:
+  ProjectName: 
+    Type: String
+    Default: udacity-agentcore
+    Description: prefix for all resource names and export names
 Resources:
 Outputs:
 

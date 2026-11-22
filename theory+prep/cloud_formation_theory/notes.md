@@ -15,3 +15,13 @@ You can make changes to the stack settings or change resources with stack update
 ![alt text](image-3.png)
 
 An element of AWS CloudFormation service architecture is the resource provisioning orchestrator, which determines the correct order for resource creation and makes API calls to create resources.
+
+![alt text](image-4.png)
+
+IMPORTANCE OF DEFAULT IN PARAMETERS SECTION:
+without a Default, CloudFormation requires you to pass ProjectName every time you deploy, and aws cloudformation deploy will fail with an error about a missing parameter value
+
+![alt text](image-5.png)
+![alt text](image-6.png)
+
+default should be Default. CloudFormation property names are case-sensitive. A lowercase default is an unknown property and gets rejected
