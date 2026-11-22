@@ -1,6 +1,5 @@
 # Milestone 3: Add the Workflow State DynamoDB Table
 
-**Date:** November 23, 2026  
 **Region:** `us-east-1`  
 **CloudFormation stack:** `udacity-agentcore`  
 **Template:** [`infrastructure/starter_stack.yaml`](../infrastructure/starter_stack.yaml)
@@ -44,7 +43,7 @@ The `session_id` partition key identifies one workflow or conversation session. 
 
 The architecture graph shows the intended agents and their shared-state relationship. It is a design reference; the application agents are not implemented in the Python package yet.
 
-![Agent graph showing shared Workflow State](./images/agent-architecture.png)
+![Agent graph showing shared Workflow State](../diagrams/agent-architecture.png)
 
 The table may store workflow values such as:
 

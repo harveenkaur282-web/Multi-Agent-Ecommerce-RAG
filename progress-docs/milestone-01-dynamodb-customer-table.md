@@ -1,6 +1,5 @@
 # Milestone 1: Deploy the Customer DynamoDB Table
 
-**Date:** November 23, 2026  
 **Region:** `us-east-1`  
 **CloudFormation stack:** `udacity-agentcore`  
 **Template:** [`infrastructure/starter_stack.yaml`](../infrastructure/starter_stack.yaml)

@@ -8,7 +8,7 @@ An AWS-based reference project for a multi-agent customer-support system. The de
 
 The diagram shows the intended agent graph and how work and shared state flow through the system.
 
-![Agent architecture graph](./progress-docs/images/agent-architecture.png)
+![Agent architecture graph](./diagrams/agent-architecture.png)
 
 The orchestrator routes customer requests to specialist agents:
 
@@ -27,7 +27,7 @@ The graph is a design reference, not a claim that the agents or runtime are alre
 
 These scenarios illustrate how different requests may route through the planned agents.
 
-![Example request flow scenarios](./image-3.png)
+![Example request flow scenarios](./diagrams/request-flow-scenarios.png)
 
 ## Infrastructure
 
@@ -47,6 +47,17 @@ This repository uses [uv](https://docs.astral.sh/uv/) for Python dependencies an
 uv sync
 ```
 
+Copy the example environment file and fill in the Knowledge Base IDs after creating the Knowledge Bases:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+`.env` is ignored by Git; keep real IDs and credentials there, not in `.env.example`.
+
+The root-level `config.py` exposes these values through `get_settings()`. Blank
+Knowledge Base IDs are returned as `None`.
+
 Run the current package scaffold:
 
 ```powershell
@@ -59,6 +70,12 @@ Validate the CloudFormation template:
 
 ```powershell
 uv run cfn-lint infrastructure/starter_stack.yaml
+```
+
+Run the unit tests:
+
+```powershell
+uv run python -m unittest discover -s tests
 ```
 
 To deploy or update the AWS stack, configure AWS CLI credentials and select the intended account and region first:
@@ -78,7 +95,10 @@ Dependency declarations live in `pyproject.toml`; `uv.lock` records the resolved
 | Path | Purpose |
 |---|---|
 | `infrastructure/` | CloudFormation infrastructure |
+| `agentcore/` | AgentCore runtime and deployment configuration (planned) |
+| `diagrams/` | Architecture and request-flow diagrams |
 | `src/multi_agent_ecommerce_rag/` | Python package scaffold |
+| `tests/` | Unit tests |
 | `progress-docs/` | Deployment milestones and evidence |
 | `theory+prep/` | Architecture notes and project preparation |
 | `agents&tools_reference.md` | Agent graph and role reference |

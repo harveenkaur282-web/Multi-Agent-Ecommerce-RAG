@@ -2,7 +2,11 @@
 
 This graph is the high-level design reference for the customer-support agent workflow. It shows the orchestrator delegating to specialist agents, the Policy Agent coordinating three parallel knowledge-base retrievers, and agents sharing workflow state in DynamoDB.
 
-![Agent architecture graph](./progress-docs/images/agent-architecture.png)
+![Agent architecture graph](./diagrams/agent-architecture.png)
+
+![Compact agent graph overview](./diagrams/agent-graph-overview.png)
+
+![Agent roles reference](./diagrams/agent-roles.png)
 
 ## Agent Responsibilities
 
@@ -20,6 +24,6 @@ The graph and responsibilities describe the intended design. The Python package 
 
 The following existing reference image contains a more detailed agent/tool and workflow-state sketch. Treat its model names, tool names, and schema details as design notes until they are verified against implemented code.
 
-![Detailed agent and tools reference snapshot](./image-2.png)
+![Detailed agent and tools reference snapshot](./diagrams/agent-tools-reference.png)
 
 For the deployed DynamoDB table definitions, see [Milestone 3: Workflow State table](./progress-docs/milestone-03-dynamodb-workflow-state-table.md).
