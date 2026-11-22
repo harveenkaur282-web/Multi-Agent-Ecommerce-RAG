@@ -8,6 +8,7 @@ Progress milestones and deployment evidence are recorded in [`progress-docs/`](.
 
 - [Milestone 1: Deploy the Customer DynamoDB Table](./progress-docs/milestone-01-dynamodb-customer-table.md)
 - [Milestone 2: Add the Orders DynamoDB Table](./progress-docs/milestone-02-dynamodb-orders-table.md)
+- [Milestone 3: Add the Workflow State DynamoDB Table](./progress-docs/milestone-03-dynamodb-workflow-state-table.md)
 
 ## setup
 

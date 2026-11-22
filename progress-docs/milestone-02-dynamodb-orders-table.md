@@ -179,3 +179,5 @@ At the end of this milestone, the CloudFormation template defines:
 - A DynamoDB Stream on the Orders table.
 
 It does not yet define application records or CloudFormation outputs.
+
+The next milestone added the shared Workflow State table, documented in [Milestone 3: Add the Workflow State DynamoDB Table](./milestone-03-dynamodb-workflow-state-table.md).

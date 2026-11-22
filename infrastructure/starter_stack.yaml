@@ -53,6 +53,24 @@ Resources:
         Enabled: true
       StreamSpecification:
         StreamViewType: NEW_AND_OLD_IMAGES
+  # Shared workflow state table.
+  # Each customer session gets one record here.
+  # Agents read and write to it as the orchestrator routes through them.
+  # version attribute enables optimistic locking (conditional writes).
+  WorkflowStateTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${ProjectName}-workflow-state
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
 
 
 # outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed
