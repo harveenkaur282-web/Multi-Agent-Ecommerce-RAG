@@ -25,3 +25,6 @@ without a Default, CloudFormation requires you to pass ProjectName every time yo
 ![alt text](image-6.png)
 
 default should be Default. CloudFormation property names are case-sensitive. A lowercase default is an unknown property and gets rejected
+
+MOST IMP: cfn-linter
+![alt text](image-7.png)

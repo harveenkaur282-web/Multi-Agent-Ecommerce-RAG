@@ -3,20 +3,33 @@ Description: >
   Udacity Project - Enterprise Multi-Agent Architecture with Amazon Bedrock AgentCore
   Infrastructure for DynamoDB, S3, S3 Vectors, IAM roles, and CloudWatch.
 
+
+
+# here parameters are the inputs that we can change at deploy time
 Parameters:
   ProjectName: 
     Type: String
     Default: udacity-agentcore
     Description: prefix for all resource names and export names
-Resources:
-Outputs:
 
-# here parameters are the inputs that we can change at deploy time
+# --------------------------
+# DYNAMODB - Application Data
+# --------------------------
+
+
 # resources - the actual aws things required for the project
-# outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed
-
 Resources:
-  MyLogicalName:              # a name you choose, used to refer to it elsewhere
-    Type: AWS::Service::Thing # what kind of resource
+  CustomersTable:              # a name you choose, used to refer to it elsewhere
+    Type: AWS::DynamoDB::Table # what kind of resource
     Properties:               # settings for it
-      SomeSetting: value
+      TableName: !Sub '${ProjectName}-customers'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: customer_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: customer_id
+          KeyType: HASH  #HASH = partition key
+
+
+# outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed
