@@ -10,3 +10,9 @@ Outputs:
 # here parameters are the inputs that we can change at deploy time
 # resources - the actual aws things required for the project
 # outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed
+
+Resources:
+  MyLogicalName:              # a name you choose, used to refer to it elsewhere
+    Type: AWS::Service::Thing # what kind of resource
+    Properties:               # settings for it
+      SomeSetting: value
