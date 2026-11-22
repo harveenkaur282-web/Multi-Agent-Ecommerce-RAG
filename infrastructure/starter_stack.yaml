@@ -72,5 +72,54 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  # ------------------------------------
+  # S3 - Policy Documents (KB data source + deployment artifacts)
+  # ------------------------------------
+  PolicyDocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub
+        - '${ProjectName}-policy-docs-${AWS::AccountId}-${ShortUUID}'
+        - ShortUUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  
+
+   # ─────────────────────────────────────────────
+  # S3 VECTORS - Knowledge Base backing store (Task 5)
+  # ─────────────────────────────────────────────
+  # S3 Vectors is a separate service from general-purpose S3. A Bedrock
+  # Knowledge Base backed by S3 Vectors needs a *vector bucket* plus one
+  # *vector index* per Knowledge Base. All three are created here for selection
+  # in the Knowledge Base console wizard.
+  #
+  # Index settings match the Titan Embed Text v2 defaults used by the KBs:
+  #   dimension 1024, cosine distance, AMAZON_BEDROCK_TEXT non-filterable
+  #   (the chunk text is stored as metadata and must not be indexed).
+
+  VectorStoreBucket:
+    Type: AWS::S3Vectors::VectorBucket
+    Properties:
+      VectorBucketName: !Sub
+        - '${ProjectName}-vectors-${AWS::AccountId}-${ShortUUID}'
+        - ShortUUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+
+  ReturnsVectorIndex:
+    Type: AWS::S3Vectors::Index
+    Properties:
+      VectorBucketArn: !GetAtt VectorStoreBucket.VectorBucketArn
+      IndexName: returns-policy-index
+      DataType: float32
+      Dimension: 1024
+      DistanceMetric: cosine
+      MetadataConfiguration:
+        NonFilterableMetadataKeys:
+          - AMAZON_BEDROCK_TEXT
+
+
 
 # outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed
