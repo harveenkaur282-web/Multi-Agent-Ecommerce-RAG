@@ -2,6 +2,31 @@
 
 A production-grade multi-agent customer support system using Amazon Bedrock AgentCore and the Strands Agents SDK
 
+## Progress Documentation
+
+Progress milestones and deployment evidence are recorded in [`progress-docs/`](./progress-docs/):
+
+- [Milestone 1: Deploy the Customer DynamoDB Table](./progress-docs/milestone-01-dynamodb-customer-table.md)
+- [Milestone 2: Add the Orders DynamoDB Table](./progress-docs/milestone-02-dynamodb-orders-table.md)
+
+## setup
+
+This project uses [uv](https://docs.astral.sh/uv/) for Python dependencies and virtual environments.
+
+Install dependencies and create the project environment:
+
+```powershell
+uv sync
+```
+
+Run the project:
+
+```powershell
+uv run multi-agent-ecommerce-rag
+```
+
+When dependencies change, update the lockfile with `uv lock`. Do not use `pip install -r requirements.txt`; dependency declarations live in `pyproject.toml` and `uv.lock`.
+
 The system consists of five AI agents working together in an Orchestrator → Workers hierarchy:
 
 1. An Orchestrator Agent that understands customer intent and routes requests to the right specialist

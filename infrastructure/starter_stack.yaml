@@ -31,5 +31,28 @@ Resources:
         - AttributeName: customer_id
           KeyType: HASH  #HASH = partition key
 
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${ProjectName}-orders'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: customer_id
+          AttributeType: S
+        - AttributeName: order_id
+          AttributeType: S
+      # Composite key: every order lookup needs both customer_id (partition
+      # key) and order_id (sort key).
+      KeySchema:
+        - AttributeName: customer_id
+          KeyType: HASH
+        - AttributeName: order_id
+          KeyType: RANGE  #RANGE = sort key
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+
 
 # outputs - the things we want to see after the stack is deployed- values to show/export after the stack is deployed
