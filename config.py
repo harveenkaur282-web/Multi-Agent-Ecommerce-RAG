@@ -1,31 +1,20 @@
-"""Load project settings from environment variables and an optional .env file."""
+# Central configuration for the project, including AWS region and knowledge base IDs.
+# Reads resource names and ARNs from CloudFormation stack exports to avoid
+# hard-coded AWS resource identifiers.
 
 import os
-from collections.abc import Mapping
-from dataclasses import dataclass
-
 from dotenv import load_dotenv
 
+# REGION & PROJECT SETTINGS
+AWS_REGION   = os.environ.get('AWS_REGION', 'us-east-1')
+PROJECT_NAME = os.environ.get('PROJECT_NAME', 'udacity-agentcore')
 
-@dataclass(frozen=True)
-class Settings:
-    aws_region: str
-    project_name: str
-    returns_kb_id: str | None
-    shipping_kb_id: str | None
-    warranty_kb_id: str | None
+# FOUNDATION MODELS
+# Orchestrator agent: Claude Haiku 4.5 - fast, cost-efficient routing decisions
+ORCHESTRATOR_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
+# Worker agents: Claude Sonnet 4.5 - more capable for reasoning and generation
+WORKER_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
-def get_settings(environ: Mapping[str, str] | None = None) -> Settings:
-    """Return settings from the environment, loading .env when no mapping is given."""
-    if environ is None:
-        load_dotenv()
-        environ = os.environ
-
-    return Settings(
-        aws_region=environ.get("AWS_REGION", "").strip() or "us-east-1",
-        project_name=environ.get("PROJECT_NAME", "").strip() or "udacity-agentcore",
-        returns_kb_id=environ.get("RETURNS_KB_ID", "").strip() or None,
-        shipping_kb_id=environ.get("SHIPPING_KB_ID", "").strip() or None,
-        warranty_kb_id=environ.get("WARRANTY_KB_ID", "").strip() or None,
-    )
+# CLOUDFORMATION EXPORTS LOADER (lazy, cached)
+_exports_cache = None
