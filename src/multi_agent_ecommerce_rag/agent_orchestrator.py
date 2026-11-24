@@ -276,7 +276,7 @@ def build_inventory_agent() -> Agent:
                         f"{customer_id}."
                     ),
                 }
-            return {"found": True, "order": item}
+            return {"found": True, "order": json.loads(json.dumps(item, default=str))}
         except ClientError as exc:
             logger.exception("Order lookup failed")
             return {"error": f"Order lookup failed: {exc.response['Error']['Code']}"}
