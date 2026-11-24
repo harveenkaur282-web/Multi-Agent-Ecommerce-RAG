@@ -1,6 +1,4 @@
 """
-demo.py
-=======
 Run one end-to-end customer support request to demonstrate the
 multi-agent system locally (no AgentCore deployment needed).
 
@@ -22,7 +20,6 @@ from agent_orchestrator import (
     trace,
 )
 
-# ── Build the agent graph ─────────────────────────────────────────────────────
 
 print("Initializing agent graph...")
 setup_logging(to_cloudwatch=True)

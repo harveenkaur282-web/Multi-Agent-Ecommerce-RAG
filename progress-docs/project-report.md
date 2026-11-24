@@ -459,6 +459,12 @@ This design separates source documents from their searchable representation.
 
 The policy-documents S3 bucket is visible in the AWS Console (see section 19.2), which is evidence that the bucket exists. This screenshot does not show its versioning or encryption properties. The S3 Vectors bucket and all three indexes are visible in the S3 Vectors console (see section 19.2). The Returns index details show dimension `1024` and cosine distance. The CloudFormation stack screenshot in section 19.1 also shows `UPDATE_COMPLETE` at the time it was captured.
 
+### CDK Bootstrap Assets Bucket
+
+The policy-documents bucket is not the bucket used to stage an AgentCore/CDK deployment package. CDK uses a separate bootstrap stack, typically named `CDKToolkit`, and its assets bucket to hold deployment artifacts such as a packaged runtime. This is deployment infrastructure, separate from both the policy-document bucket and the S3 Vectors bucket.
+
+This project has not deployed its AgentCore runtime, so it has not intentionally bootstrapped CDK for that deployment. The existing AWS account and Region could already have a `CDKToolkit` stack and an assets bucket from another project; their existence has not been checked here. Do not treat the policy-bucket screenshots as evidence of CDK bootstrap resources. Check CloudFormation for `CDKToolkit` in `us-east-1` or S3 for a bucket named like `cdk-hnb659fds-assets-<account>-us-east-1` if you need to verify them. CDK bootstrap is normally a prerequisite to deploying CDK assets, not an application resource created by the policy seeding script.
+
 ## 9. RAG and Agent Workflow
 
 RAG is useful because a foundation model should answer policy questions from project-controlled documents rather than from assumptions. The planned flow is:
@@ -826,7 +832,6 @@ The project is partially complete. The following status distinctions are importa
 - DynamoDB application records and CRUD operations.
 - Workflow-state optimistic locking.
 - Refund decision logic.
-- AgentCore runtime deployment.
 - Bedrock Guardrails.
 - Production least-privilege IAM review and any further role separation.
 - Runtime logging initialization and actual log ingestion, plus X-Ray observability.
