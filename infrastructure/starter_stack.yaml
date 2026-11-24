@@ -260,3 +260,72 @@ Resources:
       LogGroupName: !Sub /aws/bedrock/agentcore/${ProjectName}
       RetentionInDays: 14
 
+  # ─────────────────────────────────────────────
+# OUTPUTS - Display stack values and export named values for other stacks.
+# Exports can be imported by stacks in the same AWS account and Region.
+# They do not automatically populate config.py; application/deployment code
+# must explicitly retrieve or pass the values.
+# ─────────────────────────────────────────────
+Outputs:
+
+  # Table names are returned by !Ref for DynamoDB table resources.
+  OrdersTableName:
+    Value: !Ref OrdersTable
+    Export:
+      Name: !Sub ${ProjectName}-OrdersTable
+
+  CustomersTableName:
+    Value: !Ref CustomersTable
+    Export:
+      Name: !Sub ${ProjectName}-CustomersTable
+
+  WorkflowStateTableName:
+    Value: !Ref WorkflowStateTable
+    Export:
+      Name: !Sub ${ProjectName}-WorkflowStateTable
+
+  PolicyDocumentsBucketName:
+    Value: !Ref PolicyDocumentsBucket
+    Export:
+      Name: !Sub ${ProjectName}-PolicyBucket
+
+  # Select the bucket name and ARN when connecting a Knowledge Base to S3 Vectors.
+  # This repeats the same generated name expression used by VectorStoreBucket.
+  VectorStoreBucketName:
+    Value: !Sub
+      - '${ProjectName}-vectors-${AWS::AccountId}-${ShortUUID}'
+      - ShortUUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref 'AWS::StackId']]]]
+    Export:
+      Name: !Sub ${ProjectName}-VectorBucket
+
+  VectorStoreBucketArn:
+    Value: !GetAtt VectorStoreBucket.VectorBucketArn
+    Export:
+      Name: !Sub ${ProjectName}-VectorBucketArn
+
+  # Select the matching index name when configuring each policy Knowledge Base.
+  ReturnsVectorIndexName:
+    Value: returns-policy-index
+    Export:
+      Name: !Sub ${ProjectName}-ReturnsVectorIndex
+
+  ShippingVectorIndexName:
+    Value: shipping-policy-index
+    Export:
+      Name: !Sub ${ProjectName}-ShippingVectorIndex
+
+  WarrantyVectorIndexName:
+    Value: warranty-policy-index
+    Export:
+      Name: !Sub ${ProjectName}-WarrantyVectorIndex
+
+  AgentCoreRoleArn:
+    Value: !GetAtt AgentCoreExecutionRole.Arn
+    Export:
+      Name: !Sub ${ProjectName}-AgentCoreRoleArn
+
+  # Runtime logging can use this name after deployment code passes it in.
+  AgentLogGroupName:
+    Value: !Ref AgentLogGroup
+    Export:
+      Name: !Sub ${ProjectName}-AgentLogGroup

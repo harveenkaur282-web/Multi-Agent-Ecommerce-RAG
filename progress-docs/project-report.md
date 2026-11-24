@@ -202,13 +202,52 @@ The following Console views confirmed deployment:
 
 ### CloudFormation Outputs
 
-This table milestone does not define an `Outputs` section. CloudFormation therefore does not publish a reusable table name or ARN to another resource or a deployer.
-
-This is deliberate for the current stage. Outputs should be added once an application runtime or IAM resource needs to discover the table names.
-
-The absence of outputs is also visible in the AWS Console:
+At the first customer-table deployment, the template did not yet define an `Outputs` section. The screenshot records that earlier state. Outputs were added later as the stack grew to include tables, S3, S3 Vectors, the IAM role, and the log group.
 
 ![CloudFormation stack without outputs](./images/milestone-01-cloudformation-outputs.png)
+
+### Current Outputs and Exports
+
+The current template's top-level `Outputs` section publishes useful values in the CloudFormation stack's **Outputs** tab. Each output has:
+
+| YAML field | Meaning |
+|---|---|
+| Output logical ID, such as `VectorStoreBucketArn` | A template-local identifier for the output row. |
+| `Value` | The resolved value CloudFormation displays after deployment. It may come from `!Ref`, `!GetAtt`, `!Sub`, or a literal name. |
+| `Export.Name` | A named value that another stack in the same AWS account and Region can import. `!Sub` inserts `ProjectName` into the export name. |
+
+Exports do not automatically populate `config.py`. Application or deployment code must explicitly retrieve or pass values into the process environment/configuration. Export names must be unique within an account and Region, and an export cannot be removed or changed while another stack imports it.
+
+For example:
+
+```yaml
+VectorStoreBucketArn:
+  Value: !GetAtt VectorStoreBucket.VectorBucketArn
+  Export:
+    Name: !Sub ${ProjectName}-VectorBucketArn
+```
+
+Here, the output logical ID is `VectorStoreBucketArn`; `Value` reads the ARN attribute from the vector bucket; and `Export.Name` creates a reusable name such as `udacity-agentcore-VectorBucketArn`. The `!GetAtt` reference ties the output to the resource's generated ARN. Outputs are shown after the stack operation completes; they do not configure application code by themselves.
+
+| Output | How `Value` is resolved | Export name for `ProjectName=udacity-agentcore` | Intended use |
+|---|---|---|---|
+| `OrdersTableName` | `!Ref OrdersTable` returns the DynamoDB table name. | `udacity-agentcore-OrdersTable` | Configure code that reads or updates orders. |
+| `CustomersTableName` | `!Ref CustomersTable` returns the DynamoDB table name. | `udacity-agentcore-CustomersTable` | Configure customer lookups. |
+| `WorkflowStateTableName` | `!Ref WorkflowStateTable` returns the DynamoDB table name. | `udacity-agentcore-WorkflowStateTable` | Configure shared workflow-state access. |
+| `PolicyDocumentsBucketName` | `!Ref PolicyDocumentsBucket` returns the S3 bucket name. | `udacity-agentcore-PolicyBucket` | Identify the source-document bucket for ingestion and Knowledge Base setup. |
+| `VectorStoreBucketName` | `!Sub` reconstructs the parameter/account/stack-derived name used by `VectorStoreBucket`. | `udacity-agentcore-VectorBucket` | Select the S3 Vectors bucket in the Knowledge Base setup. |
+| `VectorStoreBucketArn` | `!GetAtt VectorStoreBucket.VectorBucketArn` reads the generated ARN. | `udacity-agentcore-VectorBucketArn` | Identify the vector bucket for IAM and integrations. |
+| `ReturnsVectorIndexName` | Literal `returns-policy-index`. | `udacity-agentcore-ReturnsVectorIndex` | Select the Returns index for its Knowledge Base. |
+| `ShippingVectorIndexName` | Literal `shipping-policy-index`. | `udacity-agentcore-ShippingVectorIndex` | Select the Shipping index for its Knowledge Base. |
+| `WarrantyVectorIndexName` | Literal `warranty-policy-index`. | `udacity-agentcore-WarrantyVectorIndex` | Select the Warranty index for its Knowledge Base. |
+| `AgentCoreRoleArn` | `!GetAtt AgentCoreExecutionRole.Arn` reads the role ARN. | `udacity-agentcore-AgentCoreRoleArn` | Identify the execution role when configuring the runtime. |
+| `AgentLogGroupName` | `!Ref AgentLogGroup` returns the log group name. | `udacity-agentcore-AgentLogGroup` | Pass the log destination to runtime configuration. |
+
+An export name such as `!Sub ${ProjectName}-VectorBucket` resolves to `udacity-agentcore-VectorBucket` with the current parameter value. CloudFormation publishes resolved output values after the stack operation completes.
+
+This Outputs screenshot shows all 11 values and the stack status at capture time. It is deployment evidence for the values CloudFormation published; it does not mean the Python application currently reads them automatically.
+
+![CloudFormation stack Outputs showing 11 exported values and UPDATE_COMPLETE](./images/cloudformation-stack-outputs.png)
 
 ## 6. Partition Keys, Sort Keys, and the Orders Table
 
@@ -688,7 +727,7 @@ AgentLogGroup:
 | `LogGroupName` | `/aws/bedrock/agentcore/udacity-agentcore` | `!Sub` replaces `${ProjectName}` with the stack parameter. The path is a naming convention. |
 | `RetentionInDays` | `14` | CloudWatch Logs retains log events for 14 days, then deletes expired events. |
 
-The role includes log-writing permissions, and the project configuration notes plan to provide this group name to runtime code. However, the current `config.py` does not define `AGENT_LOG_GROUP`, and the CloudFormation template does not yet export the log-group name under `Outputs`. Those are follow-up integration steps; do not imply the running agents already write here.
+The role includes log-writing permissions, and the CloudFormation template now exports this group name as `AgentLogGroupName`. However, the current `config.py` does not define `AGENT_LOG_GROUP` or read CloudFormation exports, so deployment/runtime code still needs to pass the name into the application. Do not imply the running agents already write here.
 
 An empty log group has no log-event ingestion or stored log data yet, but it does not mean all CloudWatch resources or future logging are free. Ingestion, storage, and other features can incur charges. A finite retention period limits stored-event lifetime.
 
