@@ -26,4 +26,4 @@ The following existing reference image contains a more detailed agent/tool and w
 
 ![Detailed agent and tools reference snapshot](./diagrams/agent-tools-reference.png)
 
-For the deployed DynamoDB table definitions, see [Milestone 3: Workflow State table](./progress-docs/milestone-03-dynamodb-workflow-state-table.md).
+For the deployed DynamoDB tables and complete infrastructure report, see the [Multi-Agent E-commerce RAG project report](./progress-docs/project-report.md).

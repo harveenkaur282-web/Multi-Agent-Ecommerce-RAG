@@ -99,18 +99,15 @@ Dependency declarations live in `pyproject.toml`; `uv.lock` records the resolved
 | `diagrams/` | Architecture and request-flow diagrams |
 | `src/multi_agent_ecommerce_rag/` | Python package scaffold |
 | `tests/` | Unit tests |
-| `progress-docs/` | Deployment milestones and evidence |
-| `theory+prep/` | Architecture notes and project preparation |
+| `progress-docs/` | Canonical project report and deployment evidence |
 | `agents&tools_reference.md` | Agent graph and role reference |
 | `pyproject.toml`, `uv.lock` | Project metadata and uv dependency lock |
 
-## Progress Documentation
+## Project Report
 
-- [Milestone 1: Customer DynamoDB table](./progress-docs/milestone-01-dynamodb-customer-table.md)
-- [Milestone 2: Orders DynamoDB table](./progress-docs/milestone-02-dynamodb-orders-table.md)
-- [Milestone 3: Workflow State DynamoDB table](./progress-docs/milestone-03-dynamodb-workflow-state-table.md)
+- [Complete project report](./progress-docs/project-report.md)
 
 ## Related References
 
 - [Agent architecture and roles](./agents%26tools_reference.md)
-- [Architecture design notes](./theory%2Bprep/architectural_thinking.md)
+- [Consolidated theory and interview preparation](./progress-docs/project-report.md)
