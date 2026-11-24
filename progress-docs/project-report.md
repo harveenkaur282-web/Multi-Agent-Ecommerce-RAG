@@ -86,6 +86,7 @@ Role specialization keeps each agent responsible for a distinct business functio
 | `diagrams/` | Architecture and workflow visualizations |
 | `src/multi_agent_ecommerce_rag/` | Python package scaffold |
 | `config.py` | Environment and project settings |
+| `agentcore/` | AgentCore CLI project configuration and TypeScript CDK deployment scaffold |
 | `tests/` | Configuration unit tests |
 | `pyproject.toml` | Python project metadata and dependencies |
 | `uv.lock` | Reproducible resolved dependency versions |
@@ -811,6 +812,7 @@ The project is partially complete. The following status distinctions are importa
 ### Present in the Repository
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
+- AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
 - Python configuration settings and a package scaffold.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
@@ -819,6 +821,7 @@ The project is partially complete. The following status distinctions are importa
 
 - Bedrock Knowledge Base creation and synchronization.
 - Orchestrator and specialist-agent implementation.
+- AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
 - Inventory and policy tools.
 - DynamoDB application records and CRUD operations.
 - Workflow-state optimistic locking.
@@ -856,6 +859,12 @@ RAG grounds policy answers in customer-policy documents and can retrieve only th
 ### Why use multiple agents?
 
 The work has separate responsibilities: data retrieval, policy retrieval, eligibility decisions, and response generation. Specialist agents can use specialist tools and smaller, clearer prompts.
+
+### Why seed predictable (deterministic) mock data?
+
+Stable customer and order IDs, products, and statuses give demos and tests a known dataset. A test can refer to a specific example such as `CUST-001` or `ORD-27176` every time, making results easier to reproduce and failures easier to debug than if records were randomly generated. The fixtures also include different customer tiers and order states so workflows can be exercised against meaningful cases.
+
+“Deterministic” does not mean every field is identical forever: order dates are calculated relative to the day the script runs so date-sensitive scenarios, such as refund windows, stay useful. Rerunning the script writes the same customer/order keys rather than creating duplicate records.
 
 ### Why not use a simple function?
 

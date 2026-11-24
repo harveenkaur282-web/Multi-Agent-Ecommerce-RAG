@@ -2,7 +2,7 @@
 
 An AWS-based reference project for a multi-agent customer-support system. The design uses an orchestrator, specialist agents, shared DynamoDB workflow state, and parallel policy retrieval.
 
-> **Project status:** The architecture and CloudFormation infrastructure are being developed. The Python package is currently a scaffold; the agents, tools, and end-to-end runtime described below are not implemented yet.
+> **Project status:** The architecture and CloudFormation infrastructure are being developed. An AgentCore CLI/CDK scaffold is present, but its runtime entry point is not implemented or deployed. The Python package, agents, and tools remain a scaffold.
 
 ## Agent Architecture
 
@@ -37,7 +37,9 @@ The current CloudFormation template defines:
 - An encrypted, versioned S3 bucket for policy documents.
 - An S3 Vectors bucket and a Returns policy vector index.
 
-The template does not yet define the full runtime, IAM, guardrails, or observability stack. See the [CloudFormation template](./infrastructure/starter_stack.yaml) for its exact current resources.
+The template also defines the AgentCore execution role and a CloudWatch log group, but not the AgentCore runtime, Guardrails, or X-Ray infrastructure. See the [CloudFormation template](./infrastructure/starter_stack.yaml) for its exact current resources.
+
+The [AgentCore project folder](./agentcore/README.md) contains the CLI configuration and CDK deployment scaffold. It has no deployment target configured and is not ready to deploy until the runtime code exists.
 
 ## Getting Started
 
@@ -95,7 +97,7 @@ Dependency declarations live in `pyproject.toml`; `uv.lock` records the resolved
 | Path | Purpose |
 |---|---|
 | `infrastructure/` | CloudFormation infrastructure |
-| `agentcore/` | AgentCore runtime and deployment configuration (planned) |
+| `agentcore/` | AgentCore CLI configuration and CDK scaffold; runtime not yet deployed |
 | `diagrams/` | Architecture and request-flow diagrams |
 | `src/multi_agent_ecommerce_rag/` | Python package scaffold |
 | `tests/` | Unit tests |
