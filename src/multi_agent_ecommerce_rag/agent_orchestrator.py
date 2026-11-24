@@ -259,7 +259,27 @@ def build_inventory_agent() -> Agent:
             Order record (order_id, status, product_name, order_date, price, ...)
             or a not-found message
         """
-        pass
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        try:
+            response = table.get_item(
+                Key={
+                    "customer_id": customer_id,
+                    "order_id": order_id,
+                }
+            )
+            item = response.get("Item")
+            if not item:
+                return {
+                    "found": False,
+                    "message": (
+                        f"Order {order_id} was not found for customer "
+                        f"{customer_id}."
+                    ),
+                }
+            return {"found": True, "order": item}
+        except ClientError as exc:
+            logger.exception("Order lookup failed")
+            return {"error": f"Order lookup failed: {exc.response['Error']['Code']}"}
 
     # TODO: Implement get_customer_tier
     @tool
