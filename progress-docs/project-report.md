@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables are deployed and verified. S3 and S3 Vectors resources are defined in the CloudFormation template and pass `cfn-lint`, but their AWS deployment has not been verified. The Bedrock Knowledge Bases, agent implementation, AgentCore runtime, and production controls are still planned. Architecture diagrams show the intended design, not a running end-to-end system.
+> **Project status: In progress — not complete.** The three DynamoDB tables are deployed and verified. The policy-documents S3 bucket and S3 Vectors bucket are visible in the AWS Console. The vector bucket shows all three policy indexes, and the Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified. The Bedrock Knowledge Bases, agent implementation, AgentCore runtime, and production controls are still planned. Architecture diagrams show the intended design, not a running end-to-end system.
 
 ## 1. Project Overview
 
@@ -98,11 +98,13 @@ The stack can therefore be reproduced and removed consistently. This is an advan
 
 The project template is organized into these sections:
 
-- `AWSTemplateFormatVersion`: declares the CloudFormation template format.
-- `Description`: summarizes the infrastructure.
-- `Parameters`: supplies deployment-time values.
-- `Resources`: declares AWS resources.
-- Intrinsic functions: pass values or build references between resources.
+| Template section | What it describes | Project example |
+|---|---|---|
+| `AWSTemplateFormatVersion` | CloudFormation template format version | `'2010-09-09'` |
+| `Description` | Human-readable summary | Initial customer, order, workflow, and knowledge-storage infrastructure |
+| `Parameters` | Inputs supplied at deployment time | `ProjectName`, which prefixes resource names |
+| `Resources` | AWS resources CloudFormation manages | DynamoDB tables, S3 bucket, S3 Vectors bucket and indexes |
+| Intrinsic functions | Values and references resolved by CloudFormation | `!Ref`, `!Sub`, `!GetAtt`, `!Select`, `!Split` |
 
 ```yaml
 AWSTemplateFormatVersion: '2010-09-09'
@@ -119,9 +121,13 @@ Parameters:
 
 ### Parameters
 
-`ProjectName` is a string parameter with default value `udacity-agentcore`. The default means the stack can be deployed without asking for the value every time.
+| Property | Template value | Meaning |
+|---|---|---|
+| `Type` | `String` | The parameter is text. |
+| `Default` | `udacity-agentcore` | Used when deployment does not supply an override. |
+| `Description` | `Prefix used for resource names.` | Explains how the parameter is used. |
 
-The property is named `Default`, not `default`. CloudFormation property names are case-sensitive.
+The property name is `Default`, not `default`; CloudFormation property names are case-sensitive.
 
 ### Intrinsic Functions
 
@@ -407,14 +413,16 @@ ReturnsVectorIndex:
         - AMAZON_BEDROCK_TEXT
 ```
 
-The configuration means:
+| Property | Template value | Meaning |
+|---|---|---|
+| `VectorBucketArn` | `!GetAtt VectorStoreBucket.VectorBucketArn` | Associates the index with the vector bucket. `!GetAtt` also creates an implicit dependency, so CloudFormation creates the bucket first. |
+| `IndexName` | `returns-policy-index` (also `shipping-policy-index` and `warranty-policy-index`) | Names the searchable collection for a policy domain. |
+| `DataType` | `float32` | Stores each embedding number as a 32-bit floating-point value. |
+| `Dimension` | `1024` | Number of values in each vector; must match the embedding model's output. |
+| `DistanceMetric` | `cosine` | Compares vector direction to estimate semantic similarity. |
+| `NonFilterableMetadataKeys` | `AMAZON_BEDROCK_TEXT` | Carries each text chunk as metadata for retrieval results; it is not intended for metadata filtering. |
 
-- `VectorBucketArn` connects the index to its vector bucket.
-- `!GetAtt` creates an implicit dependency.
-- `float32` is the vector data type.
-- `1024` must match the embedding model's output dimension.
-- `cosine` measures similarity by angle.
-- `AMAZON_BEDROCK_TEXT` makes the chunk text available as non-filterable retrieval metadata.
+The property reference image in section 20.4 gives a visual summary of these fields. The configured index names are set in CloudFormation; when connecting an index to a Bedrock Knowledge Base, select the existing index rather than assuming a wizard-created name.
 
 The intended design adds separate indexes for Returns, Shipping, and Warranty policies. Each index lets the Policy Agent search a focused policy domain.
 
@@ -429,7 +437,7 @@ The intended design adds separate indexes for Returns, Shipping, and Warranty po
 
 This design separates source documents from their searchable representation.
 
-The S3 and S3 Vectors resources are now structurally valid according to `cfn-lint`, but AWS deployment and resource verification are still pending. The Returns, Shipping, and Warranty indexes should not be reported as deployed until the stack resources appear in AWS.
+The policy-documents S3 bucket is visible in the AWS Console (see section 20.2), which is evidence that the bucket exists. This screenshot does not show its versioning or encryption properties. The S3 Vectors bucket and all three indexes are visible in the S3 Vectors console (see section 20.3). The Returns index details show dimension `1024` and cosine distance. The CloudFormation stack screenshot in section 20.1 also shows `UPDATE_COMPLETE` at the time it was captured.
 
 ## 9. RAG and Agent Workflow
 
@@ -502,6 +510,23 @@ Deployment evidence is stored in [progress-docs/images](./images/).
 The current template still does not define runtime application code, IAM roles, Bedrock Guardrails, AgentCore runtime resources, observability resources, or populated business data.
 
 ## 12. Design Decisions and Tradeoffs
+
+### Decision Log So Far
+
+These are the decisions reflected in the current infrastructure or target design. Cost and operational consequences are tradeoffs to validate as the project grows, not guarantees about every AWS bill.
+
+| Decision | Choice so far | Why | Tradeoff / caveat |
+|---|---|---|---|
+| Deployment rhythm | Deploy and verify in small, logical steps rather than waiting until the whole template is finished. | A failure is easier to narrow down to the latest changes; each successful update gives a known-good checkpoint. | More deployments mean more review and verification work. Use a change set for significant updates and check actual resource events. |
+| DynamoDB billing | `PAY_PER_REQUEST` for all three tables. | No read/write capacity planning; avoids provisioned-throughput charges when there is no request traffic, which suits a low-traffic learning project. | Storage, Streams activity, backups, and other features can still cost money. At sustained high request volume, provisioned capacity may be cheaper, so compare real usage and pricing before production. |
+| Customer table key | `customer_id` as a simple partition key. | A customer is retrieved by its unique customer identifier. | Other access patterns, such as lookup by email, would need a deliberately designed index or a different access path. |
+| Orders table key | `customer_id` partition key plus `order_id` sort key. | Supports listing one customer's orders and identifying one order using both key values. | Queries must follow this access pattern; this key does not make arbitrary order attributes searchable. |
+| Workflow state | One item per `session_id`, with TTL enabled. | Provides a shared durable record for the planned multi-agent workflow and a way to expire temporary sessions. | Application code still needs to write state and a Unix-epoch TTL value. Expiration is asynchronous; optimistic locking is planned but not implemented. |
+| Orders stream | `NEW_AND_OLD_IMAGES`. | Retains before-and-after item images for possible future event-driven processing. | A stream consumer is not implemented. Stream processing adds operational complexity and may incur additional charges. |
+| Policy storage | Regular S3 bucket for source documents; separate S3 Vectors bucket and one index per policy domain. | Keeps original documents separate from vector-search data and isolates Returns, Shipping, and Warranty retrieval. | Knowledge Bases, document ingestion/sync, and end-to-end retrieval are not yet implemented. |
+| Vector settings | `float32`, dimension `1024`, cosine distance, and `AMAZON_BEDROCK_TEXT` as non-filterable metadata. | Matches the intended embedding and retrieval configuration documented for this project. | Dimension must match the embedding model; verify actual Knowledge Base configuration and retrieval behavior when implemented. |
+| Naming | Prefix resource names with `ProjectName`; add account/stack-derived uniqueness to bucket names. | Gives resources a recognizable project identity while reducing global S3 name collisions. | AWS naming limits and uniqueness requirements still apply; generated names should be verified after deployment. |
+| Agent coordination | Central orchestrator with specialist roles; policy retrieval is designed to be parallel. | Makes routing and ownership easier to reason about while allowing independent policy searches to run concurrently. | Agent runtime and retrieval workflow are design only; parallel calls can increase simultaneous usage and cost. |
 
 ### DynamoDB Versus a Relational Database
 
@@ -672,9 +697,15 @@ The project is partially complete. The following status distinctions are importa
 - DynamoDB Orders table with TTL and Stream.
 - DynamoDB Workflow State table.
 
+### Deployed and Verified in AWS
+
+- Policy-documents S3 bucket is visible in the AWS Console; versioning and encryption settings still need separate verification.
+- S3 Vectors bucket and Returns, Shipping, and Warranty indexes are visible in the AWS Console.
+- Returns vector index overview shows dimension `1024` and cosine distance metric.
+
 ### Present in the Repository
 
-- CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, and Returns, Shipping, and Warranty indexes. `cfn-lint` passes, but AWS deployment and resource verification remain outstanding.
+- CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, and three indexes; the template passes `cfn-lint`.
 - Python configuration settings and a package scaffold.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
@@ -795,11 +826,13 @@ Model selection (for example, smaller or larger models for different task comple
 
 ## 20. Visual References and Deployment Evidence
 
-This section embeds every image currently present in the repository so the report can serve as a single visual reference for review and interview preparation. Image captions identify whether an image is deployment evidence, an architecture design, or a study note. Only the DynamoDB Console screenshots are evidence of resources verified as deployed; the other visuals are explanatory or planned-design references.
+This section embeds every image currently present in the repository so the report can serve as a single visual reference for review and interview preparation. Image captions identify whether an image is deployment evidence, an architecture design, or a study note. The DynamoDB screenshots show deployed tables; the S3 screenshot shows the policy-documents bucket; and the S3 Vectors screenshots show the vector bucket and its three indexes. The S3 screenshot does not verify the policy bucket's versioning or encryption configuration. Architecture diagrams and study images are references, not proof of a running agent application.
 
 ### 20.1 Deployed DynamoDB Evidence
 
 These screenshots document the deployed CloudFormation stack and DynamoDB tables.
+
+![CloudFormation stack showing UPDATE_COMPLETE](./images/cloudformation-stack-update-complete.png)
 
 ![CloudFormation deployment command for the first table](./images/milestone-01-cloudformation-deploy.png)
 
@@ -819,7 +852,29 @@ These screenshots document the deployed CloudFormation stack and DynamoDB tables
 
 ![Workflow State table resource in CloudFormation](./images/milestone-03-cloudformation-resources.png)
 
-### 20.2 Intended Agent Architecture and Request Flows
+### 20.2 Policy Documents S3 Bucket
+
+This AWS Console screenshot shows the regular S3 policy-documents bucket in `us-east-1`. The account-specific part of the name is obscured. It is not the S3 Vectors bucket and does not show vector indexes. Open the bucket's Properties page to capture evidence of versioning and default encryption separately.
+
+![Policy documents S3 bucket listed in the AWS Console](./images/policy-documents-bucket-console.png)
+
+### 20.3 S3 Vectors Bucket and Indexes
+
+The first screenshot shows the S3 Vectors bucket in the Vector buckets console. The second shows all three indexes within that bucket. The third is a detail view of the Returns index and confirms its 1024 dimension and cosine distance metric. The detail screenshot is only for Returns; it does not independently show the Shipping and Warranty settings.
+
+![S3 Vectors bucket listed in the AWS Console](./images/vector-buckets-console.png)
+
+![Returns, Shipping, and Warranty vector indexes in the vector bucket](./images/vector-indexes-console.png)
+
+![Returns vector index details, including dimension and distance metric](./images/returns-vector-index-details.png)
+
+### 20.4 Vector Index Property Reference
+
+This reference image summarizes the principal S3 Vectors index properties and their meanings. The table in section 8 gives the project-specific explanation alongside the CloudFormation values.
+
+![Reference table explaining S3 Vectors index properties](./images/vector-index-properties-reference.png)
+
+### 20.5 Intended Agent Architecture and Request Flows
 
 These diagrams communicate the target design; they are not screenshots of a running agent application.
 
@@ -833,7 +888,7 @@ These diagrams communicate the target design; they are not screenshots of a runn
 
 ![Example request-routing scenarios](../diagrams/request-flow-scenarios.png)
 
-### 20.3 CloudFormation Study Diagrams
+### 20.6 CloudFormation Study Diagrams
 
 These images are retained from CloudFormation study and preparation notes. They support the concepts discussed in section 4 and are learning references, not deployment evidence.
 
@@ -853,7 +908,7 @@ These images are retained from CloudFormation study and preparation notes. They 
 
 ![CloudFormation study diagram 7](./images/theory/image-7.png)
 
-### 20.4 Architecture Preparation Sketches
+### 20.7 Architecture Preparation Sketches
 
 These images are architecture-learning sketches kept in the preparation folder. They are references rather than implementation evidence.
 
