@@ -27,7 +27,7 @@ The intended system combines:
 
 The project is intentionally documented as both an implementation record and an architecture interview guide. This report distinguishes deployed and verified resources from template-only resources, design plans, and future implementation. The agents and end-to-end runtime are not yet implemented.
 
-The report includes the repository's visual assets in section 19. AWS Console screenshots are evidence of the deployed DynamoDB tables; architecture diagrams and study images are references and do not indicate that planned components are operational.
+The report includes relevant deployment evidence and project architecture diagrams. Planned architecture is distinguished from resources verified in AWS.
 
 ## 2. Intended Architecture
 
@@ -190,21 +190,9 @@ CustomersTable:
 
 The simple key is appropriate because each customer has a unique identifier and direct lookup is the expected access pattern.
 
-The following Console views confirmed deployment:
-
-![CloudFormation deployment command](./images/milestone-01-cloudformation-deploy.png)
-
-![Customer table CloudFormation stack](./images/milestone-01-cloudformation-stack.png)
-
-![Customer table CloudFormation resource](./images/milestone-01-cloudformation-resources.png)
-
-![DynamoDB customer table](./images/milestone-01-dynamodb-table.png)
-
 ### CloudFormation Outputs
 
-At the first customer-table deployment, the template did not yet define an `Outputs` section. The screenshot records that earlier state. Outputs were added later as the stack grew to include tables, S3, S3 Vectors, the IAM role, and the log group.
-
-![CloudFormation stack without outputs](./images/milestone-01-cloudformation-outputs.png)
+At the first customer-table deployment, the template did not yet define an `Outputs` section. Outputs were added later as the stack grew.
 
 ### Current Outputs and Exports
 
@@ -245,7 +233,7 @@ Here, the output logical ID is `VectorStoreBucketArn`; `Value` reads the ARN att
 
 An export name such as `!Sub ${ProjectName}-VectorBucket` resolves to `udacity-agentcore-VectorBucket` with the current parameter value. CloudFormation publishes resolved output values after the stack operation completes.
 
-This Outputs screenshot shows all 11 values and the stack status at capture time. It is deployment evidence for the values CloudFormation published; it does not mean the Python application currently reads them automatically.
+The screenshot below shows all 11 values and the stack status at capture time. It is evidence of values CloudFormation published; it does not mean the Python application automatically reads them.
 
 ![CloudFormation stack Outputs showing 11 exported values and UPDATE_COMPLETE](./images/cloudformation-stack-outputs.png)
 
@@ -336,12 +324,6 @@ The Orders table verification showed:
 - Status: active.
 - Item count: zero.
 
-![Orders CloudFormation resource](./images/milestone-02-cloudformation-resources.png)
-
-![Orders table settings](./images/milestone-02-dynamodb-orders.png)
-
-![Orders TTL settings](./images/milestone-02-dynamodb-settings.png)
-
 ## 7. Workflow State DynamoDB Table
 
 The Workflow State table stores shared execution state for a multi-agent session:
@@ -397,8 +379,6 @@ If another agent changes the item first, the stale update is rejected instead of
 The `version` attribute is application data. DynamoDB does not require it in `AttributeDefinitions` because `AttributeDefinitions` applies only to table indexes and primary-key attributes.
 
 TTL can later remove expired session records. It does not remove or cancel live state immediately and still requires application code to write an epoch timestamp.
-
-![Workflow State CloudFormation resource](./images/milestone-03-cloudformation-resources.png)
 
 ## 8. S3 and S3 Vectors
 
@@ -461,7 +441,7 @@ ReturnsVectorIndex:
 | `DistanceMetric` | `cosine` | Compares vector direction to estimate semantic similarity. |
 | `NonFilterableMetadataKeys` | `AMAZON_BEDROCK_TEXT` | Carries each text chunk as metadata for retrieval results; it is not intended for metadata filtering. |
 
-The property reference image in section 20.4 gives a visual summary of these fields. The configured index names are set in CloudFormation; when connecting an index to a Bedrock Knowledge Base, select the existing index rather than assuming a wizard-created name.
+The index properties and their meanings are summarized in the table above. The configured index names are set in CloudFormation; when connecting an index to a Bedrock Knowledge Base, select the existing index rather than assuming a wizard-created name.
 
 The intended design adds separate indexes for Returns, Shipping, and Warranty policies. Each index lets the Policy Agent search a focused policy domain.
 
@@ -476,7 +456,7 @@ The intended design adds separate indexes for Returns, Shipping, and Warranty po
 
 This design separates source documents from their searchable representation.
 
-The policy-documents S3 bucket is visible in the AWS Console (see section 20.2), which is evidence that the bucket exists. This screenshot does not show its versioning or encryption properties. The S3 Vectors bucket and all three indexes are visible in the S3 Vectors console (see section 20.3). The Returns index details show dimension `1024` and cosine distance. The CloudFormation stack screenshot in section 20.1 also shows `UPDATE_COMPLETE` at the time it was captured.
+The policy-documents S3 bucket is visible in the AWS Console (see section 19.2), which is evidence that the bucket exists. This screenshot does not show its versioning or encryption properties. The S3 Vectors bucket and all three indexes are visible in the S3 Vectors console (see section 19.2). The Returns index details show dimension `1024` and cosine distance. The CloudFormation stack screenshot in section 19.1 also shows `UPDATE_COMPLETE` at the time it was captured.
 
 ## 9. RAG and Agent Workflow
 
@@ -496,57 +476,113 @@ The agent system is not a replacement for deterministic validation. Customer ide
 
 ## 10. Python Configuration
 
-The package is currently a scaffold:
+`config.py` centralizes runtime configuration. It combines local environment settings with values exported by the CloudFormation stack, so code can resolve deployed resource names instead of hard-coding account-specific identifiers.
 
-```python
-def main() -> None:
-    print("Hello from multi-agent-ecommerce-rag!")
-```
+### Imports, Defaults, and Model IDs
 
-The configuration module loads environment variables and an optional `.env` file:
+| Code element | What it does |
+|---|---|
+| `import os` | Reads process environment variables such as `AWS_REGION` and `PROJECT_NAME`. |
+| `from dotenv import load_dotenv` | Imports the helper that can load values from a `.env` file. In the current file, it is imported but never called. |
+| `AWS_REGION` | Reads `AWS_REGION`; defaults to `us-east-1`. Selects the AWS Region for boto3 clients. |
+| `PROJECT_NAME` | Reads `PROJECT_NAME`; defaults to `udacity-agentcore`. Also forms the prefix used to find the stack's exports. |
+| `ORCHESTRATOR_MODEL_ID` | Configures the intended faster/less costly routing model. This is a model identifier constant; it does not itself call the model. |
+| `WORKER_MODEL_ID` | Configures the intended worker model for more involved reasoning and response generation. It does not itself start an agent. |
 
-```python
-aws_region = AWS_REGION or "us-east-1"
-project_name = PROJECT_NAME or "udacity-agentcore"
-returns_kb_id = RETURNS_KB_ID or None
-shipping_kb_id = SHIPPING_KB_ID or None
-warranty_kb_id = WARRANTY_KB_ID or None
-```
+These are environment fallbacks rather than `.env` loading: because `load_dotenv()` is not called, values in a local `.env` file will not become available through this module unless another entry point loads them first. Shell or process environment variables do work.
 
-The settings are immutable through a frozen dataclass. This makes configuration consistent throughout the application and avoids accidental changes after startup.
+### CloudFormation Export Loading
 
-Secrets and deployed Knowledge Base IDs should not be committed into Git. `.env` is intended for local configuration and is excluded from source control.
+| Element | Responsibility | Important behavior |
+|---|---|---|
+| `_exports_cache` | Holds the export-name-to-value mapping after it is loaded. | Starts as `None`; later accesses reuse the mapping to avoid repeating the API call. |
+| `ConfigError` | Project-specific configuration exception. | Gives callers a clear error for missing credentials, failed CloudFormation access, or missing required exports. |
+| `_load_cf_exports()` | Calls CloudFormation `ListExports` through boto3 and builds a dictionary. | Uses the paginator so all export pages are read; caches the result after validation. |
+| Export-prefix check | Checks for at least one export beginning with `{PROJECT_NAME}-`. | If none exists, raises an error suggesting that the stack be deployed. This confirms a project-prefixed export exists, not that every expected export exists. |
+| AWS error handling | Translates `NoCredentialsError`, `EndpointConnectionError`, and `ClientError` into `ConfigError`. | Makes common AWS configuration failures more understandable while preserving the original exception as the cause. |
 
-The declared dependencies include:
+### Lookup Helpers
 
-- `boto3` for AWS API access.
-- `python-dotenv` for environment loading.
-- `cfn-lint` for template validation.
-- `strands-agents` for agent behavior.
+| Helper | Lookup order / behavior | When used |
+|---|---|---|
+| `_get(key, fallback_env=None)` | Looks up the export named `{PROJECT_NAME}-{key}`; optionally checks the named environment variable if the export value is missing; otherwise raises `ConfigError`. | Required resource names and ARNs. |
+| `_get_env(key, required=True)` | Reads an environment variable and raises `ConfigError` if it is required but empty. | Available for settings that are not in CloudFormation; it is not currently called elsewhere in this file. |
+| `_account_id()` | Calls STS `GetCallerIdentity` in `AWS_REGION` and returns the account ID. | Supplies the account identifier shown by `print_config()`. |
+| `_get_kb_id(cf_key, env_key)` | Checks the environment variable first, then the matching CloudFormation export. If export loading raises `ConfigError`, returns an empty string. | Optional Returns, Shipping, and Warranty Knowledge Base IDs, which have not yet been created/exported. |
+| `_get_optional_export(cf_key, env_key, default='')` | Checks the environment variable first, then CloudFormation, then returns the default. It returns the default if export loading raises `ConfigError`. | Optional Guardrail ID and version. |
+
+### Lazy Configuration Values
+
+`_LAZY` maps public configuration names to functions. A value is resolved only when code asks for it, for example `config.ORDERS_TABLE`. The module-level `__getattr__` is the PEP 562 hook that makes this lazy access possible.
+
+| Public names | Source | Current purpose |
+|---|---|---|
+| `ACCOUNT_ID` | STS `GetCallerIdentity` | Identify the active AWS account. |
+| `ORDERS_TABLE`, `CUSTOMERS_TABLE`, `WORKFLOW_STATE_TABLE` | `OrdersTable`, `CustomersTable`, `WorkflowStateTable` CloudFormation exports | Address the three DynamoDB tables. |
+| `POLICY_BUCKET` | `PolicyBucket` export | Address the source policy-document bucket. |
+| `VECTOR_STORE_BUCKET`, `VECTOR_STORE_BUCKET_ARN` | `VectorBucket`, `VectorBucketArn` exports | Identify the S3 Vectors bucket by name and ARN. |
+| `RETURNS_VECTOR_INDEX`, `SHIPPING_VECTOR_INDEX`, `WARRANTY_VECTOR_INDEX` | The three vector-index exports | Select the index for the corresponding policy domain. |
+| `AGENTCORE_ROLE_ARN` | `AgentCoreRoleArn` export | Identify the execution role. |
+| `AGENT_LOG_GROUP` | `AgentLogGroup` export | Identify the CloudWatch log group. |
+| `RETURNS_KB_ID`, `SHIPPING_KB_ID`, `WARRANTY_KB_ID` | Environment variable first, then `{PROJECT_NAME}-ReturnsKbId`, `...-ShippingKbId`, or `...-WarrantyKbId` export | Optional IDs for the Knowledge Bases, not yet available in the current template. |
+| `GUARDRAIL_ID`, `GUARDRAIL_VERSION` | Environment variable first, then optional corresponding export | Optional guardrail settings, not yet created/exported. |
+
+When a lazy lookup succeeds, `__getattr__` stores stable resource values in the module's globals so subsequent access does not repeat the lookup. Knowledge Base and Guardrail values are deliberately not cached, allowing those optional values to reflect later environment changes during the process. Unknown names raise `AttributeError`, as expected for a Python module.
+
+### Runtime, Memory, and Guardrail Constants
+
+| Constant | How it is set | Meaning / current status |
+|---|---|---|
+| `AGENTCORE_RUNTIME_ARN` | Reads environment variable `AGENTCORE_RUNTIME_ARN`, defaulting to an empty string. | Filled after runtime deployment; currently the report's run screenshot shows it as not yet deployed. |
+| `AGENTCORE_PROJECT_NAME` | Fixed to `udacity`. | Intended to match the project `name` in `agentcore/agentcore.json`. |
+| `AGENTCORE_AGENT_NAME` | Fixed to `agentcore_runtime`. | Intended to match the runtime name in `agentcore/agentcore.json`. |
+| `AGENTCORE_RUNTIME_NAME` | Joins the project and agent names with `_`. | Produces `udacity_agentcore_runtime`; this is a derived name, not proof of a deployed runtime. |
+| `AGENTCORE_STACK_NAME` | Builds `AgentCore-{project}-default`. | Names the stack expected from the AgentCore CLI deployment. |
+| `MEMORY_NAMESPACE` | Combines `PROJECT_NAME` with `-memory`. | Human-readable namespace for the planned AgentCore Memory integration. |
+| `MEMORY_NAME` | Replaces hyphens in the namespace with underscores. | Produces an identifier compatible with the naming convention noted in the code. |
+| `GUARDRAIL_NAME` | Combines `PROJECT_NAME` with `-guardrail`. | Intended guardrail name; not proof that a guardrail exists. |
+| `GUARDRAIL_BLOCKED_TOPICS` | Fixed list: competitor products, pricing negotiations, and legal threats. | Proposed topics for future guardrail configuration; the list alone does not enforce a guardrail. |
+
+### `print_config()` and Script Execution
+
+| Code element | What it does |
+|---|---|
+| `_display(label, value, placeholder)` | Prints a consistently aligned label and displays a placeholder when the value is empty. |
+| `_resolve(name)` | Attempts a lazy lookup and converts an exception to an `ERROR: ...` display string so the diagnostic report can continue. |
+| `print_config()` | Prints region, account, model identifiers, resource names, optional Knowledge Base/Guardrail values, and runtime details. |
+| `if __name__ == '__main__':` | Calls `print_config()` only when running `python config.py`; importing `config` does not print the report. |
+
+The terminal screenshot in section 19.5 shows the current diagnostic run: AWS identity and CloudFormation exports resolve, while Knowledge Base IDs, runtime ARN, and Guardrail settings display their expected not-yet-configured placeholders. The derived runtime name is printed even though the runtime itself is not deployed.
+
+### Current Boundaries and Follow-Up
+
+| Current behavior | What it does not mean |
+|---|---|
+| Table names, bucket names, index names, role ARN, and log-group name print successfully. | It does not mean Python agents are implemented or using those resources. |
+| `ACCOUNT_ID` resolves from STS. | The account ID is not a CloudFormation output; it comes from the credentials active in the environment. |
+| Knowledge Base IDs show `(not yet created)`. | The current CloudFormation template exports bucket/index names, not Knowledge Base IDs. |
+| `AGENT_LOG_GROUP` resolves from the `AgentLogGroup` export. | The application does not yet write logs there merely because the name resolves. |
+| `load_dotenv` is imported. | The module does not load `.env` by itself because `load_dotenv()` is not called. |
+
+The printed values are a useful smoke check for AWS credentials, region selection, stack exports, and missing optional configuration. Keep real credentials out of the report and repository.
 
 ## 11. Deployment and Verification Record
 
-The CloudFormation deployment history demonstrates:
+The template has been deployed to the `udacity-agentcore` stack in `us-east-1`. The console evidence in section 19 shows the current stack status and exported outputs, the DynamoDB tables, S3/S3 Vectors resources, IAM role, and CloudWatch log group. The template passes `cfn-lint`.
 
-| Stage | Resources |
-|---|---|
-| 1 | Customer DynamoDB table |
-| 2 | Customer table plus Orders table |
-| 3 | Customer, Orders, and Workflow State tables |
+### Seed Initial Data
 
-Verified:
+After CloudFormation reaches `CREATE_COMPLETE`, run the seed script to populate the existing resources:
 
-- The `udacity-agentcore` stack was deployed to `us-east-1`.
-- `CustomersTable` has logical status `CREATE_COMPLETE`.
-- `OrdersTable` has logical status `CREATE_COMPLETE`.
-- `WorkflowStateTable` has logical status `CREATE_COMPLETE`.
-- The customer table is empty.
-- The Orders table is empty.
-- The Workflow State table is deployed and empty.
+```powershell
+python infrastructure/seed_data.py
+```
 
-Deployment evidence is stored in [progress-docs/images](./images/).
+The script writes four mock customers and eleven orders to DynamoDB, then uploads six policy files under `policies/returns/`, `policies/shipping/`, and `policies/warranty/` in the policy-documents S3 bucket. Customer and order IDs are stable for the demo and tests (for example, `CUST-001` and `ORD-27176`); order dates are calculated relative to the run date. The script uses `put_item` and `put_object`, so rerunning it overwrites the same keys/items with the current generated values rather than creating duplicate customer/order records.
 
-The current template defines an AgentCore execution IAM role and a CloudWatch Logs log group, but does not define runtime application code, Bedrock Guardrails, AgentCore runtime resources, X-Ray infrastructure, or populated business data.
+This follows the [Udacity starter instructions for seeding initial data](https://github.com/udacity/cd14764-aws-agentic-c3-classroom/blob/main/project/starter/README.md#4-seed-initial-data). Console evidence of the seeded records and policy objects appears in section 19.6.
+
+The resources are infrastructure, not a complete application: Knowledge Bases, agent code, AgentCore runtime, active log emission, and end-to-end RAG are not yet implemented.
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -567,49 +603,6 @@ These are the decisions reflected in the current infrastructure or target design
 | Naming | Prefix resource names with `ProjectName`; add account/stack-derived uniqueness to bucket names. | Gives resources a recognizable project identity while reducing global S3 name collisions. | AWS naming limits and uniqueness requirements still apply; generated names should be verified after deployment. |
 | Agent coordination | Central orchestrator with specialist roles; policy retrieval is designed to be parallel. | Makes routing and ownership easier to reason about while allowing independent policy searches to run concurrently. | Agent runtime and retrieval workflow are design only; parallel calls can increase simultaneous usage and cost. |
 | CloudWatch log retention | Dedicated log group with `RetentionInDays: 14`. | Keeps the planned AgentCore log destination explicit and limits how long log events are retained. | Retention controls stored log events, not whether logs are produced. Ingestion and retained data can incur charges; an empty log group is not proof of working runtime logging. |
-
-### DynamoDB Versus a Relational Database
-
-DynamoDB was chosen for the workflow and operational state because the access patterns are key-based and the system requires highly available, serverless scaling.
-
-Tradeoffs:
-
-- DynamoDB is excellent for known partition/sort-key access patterns.
-- It requires deliberate key and index design.
-- Cross-table joins are not performed by DynamoDB.
-- A relational database may be easier for complex analytics or ad-hoc joins.
-
-For this project, the three table access patterns are clearer as DynamoDB item lookups and queries.
-
-### Orchestrated Versus Peer-to-Peer Agents
-
-The orchestrator pattern was chosen for predictable routing and centralized state.
-
-Tradeoffs:
-
-- The orchestrator becomes a coordination bottleneck.
-- It provides a clear audit trail and simpler debugging.
-- Peer-to-peer communication can be more flexible.
-- Peer-to-peer communication is harder to constrain and observe.
-
-### Multiple Agents Versus an If-Else Function
-
-An if-else workflow could solve a fixed set of business rules. It would be cheaper and easier to test for deterministic routing.
-
-Agents are useful when:
-
-- Intent is ambiguous.
-- Policies require contextual retrieval.
-- The application must compare structured data with natural-language documents.
-- Specialist tools have to be selected dynamically.
-
-Agents should not replace deterministic checks. Their use adds latency, cost, and nondeterminism, so agent boundaries and final validation rules must be controlled.
-
-### Parallel Versus Sequential Policy Retrieval
-
-Sequential retrieval is simpler but slower. Parallel retrieval across Returns, Shipping, and Warranty is appropriate when all policy domains could independently contribute context.
-
-Tradeoffs include higher simultaneous API usage and cost. Results must be deduplicated and ranked before generating a final answer.
 
 ## 13. Reliability and Failure Handling
 
@@ -685,7 +678,7 @@ The inline `AgentCoreProjectPolicy` contains nine statements. Each statement gro
 | Remove unneeded permissions. | Permissions for planned services should be removed until those services are actually required. |
 | Consider per-agent roles. | Separate, narrower roles can reduce the impact of an agent or tool error compared with one shared execution role. |
 
-The IAM screenshots in section 20.5 are deployment evidence for the `udacity-agentcore-agentcore-role`, its `AgentCoreProjectPolicy`, the trusted Bedrock service principals, and the policy permissions shown in the AWS Console. The role and policy are deployed. The CloudFormation template records the policy configuration maintained in the repository.
+The IAM screenshots in section 19.3 are deployment evidence for the `udacity-agentcore-agentcore-role`, its `AgentCoreProjectPolicy`, the trusted Bedrock service principals, and the policy permissions shown in the AWS Console. The role and policy are deployed. The CloudFormation template records the policy configuration maintained in the repository.
 
 For the eventual per-agent design, permissions should be separated according to responsibility:
 
@@ -727,15 +720,11 @@ AgentLogGroup:
 | `LogGroupName` | `/aws/bedrock/agentcore/udacity-agentcore` | `!Sub` replaces `${ProjectName}` with the stack parameter. The path is a naming convention. |
 | `RetentionInDays` | `14` | CloudWatch Logs retains log events for 14 days, then deletes expired events. |
 
-The role includes log-writing permissions, and the CloudFormation template now exports this group name as `AgentLogGroupName`. However, the current `config.py` does not define `AGENT_LOG_GROUP` or read CloudFormation exports, so deployment/runtime code still needs to pass the name into the application. Do not imply the running agents already write here.
+The role includes log-writing permissions, the CloudFormation template exports this group name as `AgentLogGroupName`, and `config.py` can resolve it lazily as `config.AGENT_LOG_GROUP`. This connects the infrastructure value to configuration, but the application/runtime still needs to initialize logging and emit events. Do not imply the running agents already write here.
 
 An empty log group has no log-event ingestion or stored log data yet, but it does not mean all CloudWatch resources or future logging are free. Ingestion, storage, and other features can incur charges. A finite retention period limits stored-event lifetime.
 
-The first screenshot explains the intended log-group/stream relationship. The second shows the deployed log group and its two-week retention setting.
-
-![CloudWatch log group and log stream concept explanation](./images/cloudwatch-log-group-explainer.png)
-
-![AgentCore CloudWatch log group in the AWS Console with two-week retention](./images/agentcore-log-group-console.png)
+The log-group concept and deployed log group screenshots are in section 19.3.
 
 The broader planned observability stack may later combine:
 
@@ -811,10 +800,9 @@ The project is partially complete. The following status distinctions are importa
 
 ### Deployed and Verified in AWS
 
-- DynamoDB Customers table.
-- DynamoDB Orders table with TTL and Stream.
+- DynamoDB Customers and Orders tables are seeded; persisted records are shown in section 19.6.
 - DynamoDB Workflow State table.
-- Policy-documents S3 bucket is visible in the AWS Console; versioning and encryption settings still need separate verification.
+- Policy-documents S3 bucket contains the seeded policy files shown in section 19.6; versioning and encryption settings still need separate verification.
 - S3 Vectors bucket and Returns, Shipping, and Warranty indexes are visible in the AWS Console.
 - Returns vector index overview shows dimension `1024` and cosine distance metric.
 - `udacity-agentcore-agentcore-role` is visible in IAM with the `AgentCoreProjectPolicy` inline policy name and Bedrock / Bedrock AgentCore trusted-service principals.
@@ -838,7 +826,7 @@ The project is partially complete. The following status distinctions are importa
 - AgentCore runtime deployment.
 - Bedrock Guardrails.
 - Production least-privilege IAM review and any further role separation.
-- Runtime log configuration/export, actual log ingestion, and X-Ray observability.
+- Runtime logging initialization and actual log ingestion, plus X-Ray observability.
 - End-to-end RAG evaluation.
 
 This project is an **in-progress architecture and infrastructure implementation**, not a completed or production-ready multi-agent application. The diagrams and planned flows describe the target state. They must not be presented as evidence that the full system is already running.
@@ -881,87 +869,17 @@ Validate tool inputs, validate tool outputs against a schema, require authorizat
 
 Measure answer correctness, source grounding, policy accuracy, refusal quality, latency, cost, retry rate, escalation rate, tool failures, and customer satisfaction. Infrastructure metrics alone do not prove that responses are correct.
 
-## 19. Consolidated Theory and Interview Preparation
+## 19. Visual References and Deployment Evidence
 
-This section consolidates the useful architecture and CloudFormation theory notes that previously lived in a separate preparation folder. These topics explain design choices for this project; future capabilities remain proposals until implemented and verified.
+This section collects deployment evidence and architecture diagrams. The DynamoDB screenshots show deployed tables; the S3 screenshot shows the policy-documents bucket; and the S3 Vectors screenshots show the vector bucket and its three indexes. The S3 screenshot does not verify the policy bucket's versioning or encryption configuration. Architecture diagrams show the intended design, not a running agent application.
 
-### 19.1 Architecture Fundamentals
+### 19.1 Deployed Infrastructure Evidence
 
-Software architecture describes a system's components, their relationships, their operating environment, and the principles guiding its evolution. For an agent system, the design should make each agent's responsibilities, communication paths, shared state, and failure boundaries explicit.
-
-Important terms:
-
-- **Orchestrator pattern:** A central agent routes work to specialist agents and coordinates the workflow.
-- **Peer-to-peer pattern:** Agents communicate directly without a central manager.
-- **Role specialization:** Each agent owns a defined responsibility and limited tool set.
-- **Data flow:** The path of request data, retrieved evidence, decisions, and results through the system.
-- **Sequential workflow:** Steps run in order when later work depends on earlier output.
-- **Parallel workflow:** Independent work, such as searching multiple policy sources, runs concurrently.
-- **Conditional workflow:** A decision routes execution down a branch based on validated state or intent.
-- **Saga-style coordination:** A long-running workflow records progress and uses compensating actions or recovery steps when a later operation fails.
-
-The project favors a centralized orchestrator for a clearer decision trail and easier debugging. Peer-to-peer collaboration can be useful for dynamic expert collaboration, but it introduces more complex coordination and observability. Shared DynamoDB workflow state is the planned record of progress; AgentCore Memory is a future option for conversational memory, not currently configured here.
-
-### 19.2 CloudFormation Service and Stack Concepts
-
-A CloudFormation template is a declarative description of desired AWS resources. CloudFormation parses and validates the template, calculates dependencies, then calls the relevant AWS services to create or update resources. A **stack** groups those resources and manages them as a unit.
-
-During an update, a **change set** previews the resource changes CloudFormation expects to apply. It helps review whether a change will add, modify, replace, or remove resources before execution. A stack is not a guarantee that every resource can be deleted without consequences: retention policies, external dependencies, and service-specific deletion constraints must be considered.
-
-CloudFormation chooses resource ordering from dependencies, not simply from the order resources appear in YAML. `!Ref` and `!GetAtt` references commonly establish implicit dependencies. Use an explicit `DependsOn` only when a required ordering relationship is not expressed through a reference.
-
-### 19.3 CloudFormation Parameter and Validation Lessons
-
-The `ProjectName` parameter has a `Default`. With a default, a deployment can omit an explicit parameter value; without one, the deployer must supply it. `Default` is case-sensitive and must use the exact CloudFormation property name.
-
-Run `cfn-lint` before deploying to catch template schema and resource configuration problems early. Passing lint is not the same as a successful AWS deployment: AWS may still reject a resource because of account permissions, region support, naming collisions, quotas, or service-side validation.
-
-The deployment workflow should be:
-
-1. Edit the template.
-2. Run `uv run cfn-lint infrastructure/starter_stack.yaml`.
-3. Review the diff and, for meaningful changes, create or inspect a CloudFormation change set.
-4. Deploy only to the intended account and region.
-5. Verify the stack events, resource status, and service-side configuration.
-6. Record what was actually observed, separating it from planned behavior.
-
-### 19.4 Multi-Agent Design Questions
-
-Before adding an agent, ask whether the responsibility genuinely needs language understanding, contextual synthesis, or dynamic tool selection. If fixed rules fully define the behavior, a deterministic function is usually cheaper, faster, and easier to test. A hybrid design uses agents for ambiguity and deterministic code for validations, authorization, calculations, and consequential mutations.
-
-Agent boundaries should identify:
-
-- The agent's goal and the conditions for completion.
-- The tools it is allowed to call.
-- The typed input and output contracts.
-- The data it may read or change.
-- Timeouts, retry limits, and error behavior.
-- What happens when evidence is missing or specialists disagree.
-- When a request is escalated to a human.
-
-Model selection (for example, smaller or larger models for different task complexity) is a future design decision. No model-to-agent assignments are implemented in the current Python scaffold.
-
-## 20. Visual References and Deployment Evidence
-
-This section embeds every image currently present in the repository so the report can serve as a single visual reference for review and interview preparation. Image captions identify whether an image is deployment evidence, an architecture design, or a study note. The DynamoDB screenshots show deployed tables; the S3 screenshot shows the policy-documents bucket; and the S3 Vectors screenshots show the vector bucket and its three indexes. The S3 screenshot does not verify the policy bucket's versioning or encryption configuration. Architecture diagrams and study images are references, not proof of a running agent application.
-
-### 20.1 Deployed DynamoDB Evidence
-
-These screenshots document the deployed CloudFormation stack and DynamoDB tables.
+These screenshots document the deployed stack and table configuration.
 
 ![CloudFormation stack showing UPDATE_COMPLETE](./images/cloudformation-stack-update-complete.png)
 
-![CloudFormation deployment command for the first table](./images/milestone-01-cloudformation-deploy.png)
-
-![CloudFormation stack after creating the customer table](./images/milestone-01-cloudformation-stack.png)
-
-![Customer DynamoDB resource in CloudFormation](./images/milestone-01-cloudformation-resources.png)
-
 ![Customer DynamoDB table in the AWS Console](./images/milestone-01-dynamodb-table.png)
-
-![CloudFormation outputs view for the customer-table stack](./images/milestone-01-cloudformation-outputs.png)
-
-![CloudFormation resources after adding the Orders table](./images/milestone-02-cloudformation-resources.png)
 
 ![Orders table key and settings in the AWS Console](./images/milestone-02-dynamodb-orders.png)
 
@@ -969,15 +887,13 @@ These screenshots document the deployed CloudFormation stack and DynamoDB tables
 
 ![Workflow State table resource in CloudFormation](./images/milestone-03-cloudformation-resources.png)
 
-### 20.2 Policy Documents S3 Bucket
+### 19.2 S3 and Vector Store
 
 This AWS Console screenshot shows the regular S3 policy-documents bucket in `us-east-1`. The account-specific part of the name is obscured. It is not the S3 Vectors bucket and does not show vector indexes. Open the bucket's Properties page to capture evidence of versioning and default encryption separately.
 
 ![Policy documents S3 bucket listed in the AWS Console](./images/policy-documents-bucket-console.png)
 
-### 20.3 S3 Vectors Bucket and Indexes
-
-The first screenshot shows the S3 Vectors bucket in the Vector buckets console. The second shows all three indexes within that bucket. The third is a detail view of the Returns index and confirms its 1024 dimension and cosine distance metric. The detail screenshot is only for Returns; it does not independently show the Shipping and Warranty settings.
+The next screenshots show the separate S3 Vectors bucket, all three indexes, and the Returns index settings. The Returns index detail confirms dimension `1024` and cosine distance; it does not independently verify the Shipping and Warranty settings.
 
 ![S3 Vectors bucket listed in the AWS Console](./images/vector-buckets-console.png)
 
@@ -985,13 +901,7 @@ The first screenshot shows the S3 Vectors bucket in the Vector buckets console. 
 
 ![Returns vector index details, including dimension and distance metric](./images/returns-vector-index-details.png)
 
-### 20.4 Vector Index Property Reference
-
-This reference image summarizes the principal S3 Vectors index properties and their meanings. The table in section 8 gives the project-specific explanation alongside the CloudFormation values.
-
-![Reference table explaining S3 Vectors index properties](./images/vector-index-properties-reference.png)
-
-### 20.5 AgentCore IAM Role Evidence
+### 19.3 IAM and Observability
 
 These screenshots provide AWS Console evidence of the deployed IAM role and configuration: the role list shows the role, the permissions page shows the inline policy, the trust relationship shows its trusted service principals, and the policy editor shows the deployed policy statements.
 
@@ -1001,17 +911,13 @@ These screenshots provide AWS Console evidence of the deployed IAM role and conf
 
 ![Trusted service principals in the AgentCore role trust relationship](./images/agentcore-role-trust-relationship.png)
 
-![IAM policy editor showing a policy modification in progress](./images/agentcore-policy-editor.png)
-
-### 20.6 CloudWatch Log Group Evidence
-
-The first image is a conceptual reference for log groups and log streams. The second is AWS Console evidence that the project log group exists and has a two-week retention setting. Neither image shows agent log events being emitted by a running application.
+![Deployed IAM policy statements in the policy editor](./images/agentcore-policy-editor.png)
 
 ![CloudWatch log-group concept](./images/cloudwatch-log-group-explainer.png)
 
 ![Deployed AgentCore log group and retention in CloudWatch](./images/agentcore-log-group-console.png)
 
-### 20.7 Intended Agent Architecture and Request Flows
+### 19.4 Intended Agent Architecture and Request Flows
 
 These diagrams communicate the target design; they are not screenshots of a running agent application.
 
@@ -1025,49 +931,36 @@ These diagrams communicate the target design; they are not screenshots of a runn
 
 ![Example request-routing scenarios](../diagrams/request-flow-scenarios.png)
 
-### 20.8 CloudFormation Study Diagrams
+### 19.5 Configuration Run Evidence
 
-These images are retained from CloudFormation study and preparation notes. They support the concepts discussed in section 4 and are learning references, not deployment evidence.
+This terminal capture shows `python config.py` resolving the active AWS account and CloudFormation exports. Knowledge Base IDs, runtime ARN, and Guardrail ID/version remain placeholders because those pieces have not yet been created or configured. The printed runtime name is derived locally and does not indicate that the runtime is deployed.
 
-![CloudFormation study diagram](./images/theory/image.png)
+![config.py output with resolved AWS resources and pending values](./images/config-py-console-output.png)
 
-![CloudFormation study diagram 1](./images/theory/image-1.png)
+### 19.6 Data Seeding Run Evidence
 
-![CloudFormation study diagram 2](./images/theory/image-2.png)
+The terminal capture and console scans below provide evidence that the seeding command completed and that its data is present in DynamoDB and S3. See section 11 for what the script writes and how it behaves when rerun.
 
-![CloudFormation study diagram 3](./images/theory/image-3.png)
+![Successful seed_data.py run reporting customer, order, and policy-document writes](./images/seed-data-console-output.png)
 
-![CloudFormation study diagram 4](./images/theory/image-4.png)
+These AWS Console screenshots independently show the deployed tables and persisted records. The table list shows all three tables are Active; the customer scan returned four items; and the orders scan returned eleven.
 
-![CloudFormation study diagram 5](./images/theory/image-5.png)
+![Three active DynamoDB tables after seeding](./images/dynamodb-tables-after-seeding.png)
 
-![CloudFormation study diagram 6](./images/theory/image-6.png)
+![DynamoDB scan showing the four seeded customer items](./images/dynamodb-seeded-customers.png)
 
-![CloudFormation study diagram 7](./images/theory/image-7.png)
+![DynamoDB scan showing the eleven seeded order items](./images/dynamodb-seeded-orders.png)
 
-### 20.9 Architecture Preparation Sketches
+The S3 screenshots show the `policies/` prefix, all three policy-domain folders, and the two expected files in each domain folder.
 
-These images are architecture-learning sketches kept in the preparation folder. They are references rather than implementation evidence.
+![S3 policy-documents bucket showing the policies prefix](./images/s3-policy-prefix.png)
 
-![Architecture preparation sketch](./images/theory/architecture.png)
+![S3 policies prefix showing Returns, Shipping, and Warranty folders](./images/s3-policy-domains.png)
 
-![Architecture preparation sketch 1](./images/theory/architecture-1.png)
+![S3 Returns folder showing customer tiers and return policy documents](./images/s3-returns-policy-files.png)
 
-![Architecture preparation sketch 2](./images/theory/architecture-2.png)
+![S3 Shipping folder showing customer tiers and shipping policy documents](./images/s3-shipping-policy-files.png)
 
-## 21. Interview Practice Questions
+![S3 Warranty folder showing customer tiers and warranty policy documents](./images/s3-warranty-policy-files.png)
 
-Use these questions to practice explaining the design decisions and current implementation honestly:
-
-1. What is the difference between a CloudFormation template and a stack?
-2. How does CloudFormation know to create the vector bucket before its index when the index uses `!GetAtt`?
-3. What is the difference between an S3 bucket, an S3 Vectors bucket, and a vector index?
-4. Why does the Orders table use both `customer_id` and `order_id` as its key?
-5. What does DynamoDB TTL do, and why is expiration not immediate?
-6. How would optimistic locking stop two agents from overwriting each other's workflow state?
-7. When is a deterministic function preferable to an LLM agent?
-8. What does the orchestrator pattern simplify, and what tradeoff does it introduce?
-9. How would the system handle a failed or conflicting policy retrieval?
-10. Which metrics would show that a multi-agent RAG workflow is reliable and cost-effective?
-11. Which parts are actually deployed today, and which remain design or implementation work?
-12. What would you implement next, and how would you verify it end-to-end?
+Together, the terminal output and these console views are sufficient evidence to move on to the next implementation task. The DynamoDB records contain mock customer data; redact email values if sharing screenshots outside your own interview materials.
