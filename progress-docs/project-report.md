@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, and an AgentCore IAM role are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified. Bedrock Knowledge Bases, agent implementation, AgentCore runtime, and production hardening are still planned. Architecture diagrams show the intended design, not a running end-to-end system.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified. Bedrock Knowledge Bases, agent implementation, AgentCore runtime, and production hardening are still planned. Architecture diagrams show the intended design, not a running end-to-end system.
 
 ## 1. Project Overview
 
@@ -507,7 +507,7 @@ Verified:
 
 Deployment evidence is stored in [progress-docs/images](./images/).
 
-The current template defines an AgentCore execution IAM role, but does not define runtime application code, Bedrock Guardrails, AgentCore runtime resources, observability resources, or populated business data.
+The current template defines an AgentCore execution IAM role and a CloudWatch Logs log group, but does not define runtime application code, Bedrock Guardrails, AgentCore runtime resources, X-Ray infrastructure, or populated business data.
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -527,6 +527,7 @@ These are the decisions reflected in the current infrastructure or target design
 | Vector settings | `float32`, dimension `1024`, cosine distance, and `AMAZON_BEDROCK_TEXT` as non-filterable metadata. | Matches the intended embedding and retrieval configuration documented for this project. | Dimension must match the embedding model; verify actual Knowledge Base configuration and retrieval behavior when implemented. |
 | Naming | Prefix resource names with `ProjectName`; add account/stack-derived uniqueness to bucket names. | Gives resources a recognizable project identity while reducing global S3 name collisions. | AWS naming limits and uniqueness requirements still apply; generated names should be verified after deployment. |
 | Agent coordination | Central orchestrator with specialist roles; policy retrieval is designed to be parallel. | Makes routing and ownership easier to reason about while allowing independent policy searches to run concurrently. | Agent runtime and retrieval workflow are design only; parallel calls can increase simultaneous usage and cost. |
+| CloudWatch log retention | Dedicated log group with `RetentionInDays: 14`. | Keeps the planned AgentCore log destination explicit and limits how long log events are retained. | Retention controls stored log events, not whether logs are produced. Ingestion and retained data can incur charges; an empty log group is not proof of working runtime logging. |
 
 ### DynamoDB Versus a Relational Database
 
@@ -603,27 +604,47 @@ The template defines `AgentCoreExecutionRole`, named from the `ProjectName` para
 
 IAM has two separate policy ideas:
 
-| Policy | Template property | Question it answers |
+| Policy | Template property | Meaning in this project |
 |---|---|---|
-| Trust policy | `AssumeRolePolicyDocument` | Which principals may assume this role? |
-| Permissions policy | `Policies` → `PolicyDocument` | What may a principal do after assuming the role? |
+| Trust policy | `AssumeRolePolicyDocument` | Defines who may assume the role. It trusts `bedrock.amazonaws.com` and `bedrock-agentcore.amazonaws.com` to call `sts:AssumeRole`. |
+| Permissions policy | `Policies` → `PolicyDocument` | Defines what the role may do after a trusted service assumes it. The inline policy is named `AgentCoreProjectPolicy`. |
+| Why both are required | Trust policy + permissions policy | The runtime service must be allowed to assume the role, and the role must have permission for the AWS actions the runtime needs. Trust alone does not grant data/API access; permissions alone do not make a service trusted to assume the role. |
+| Why the developer user is absent from trust | Trusted principals list | This is an execution role for AWS services to assume, not a role intended for direct use by the developer's IAM user. |
 
-The trust policy allows the `bedrock.amazonaws.com` and `bedrock-agentcore.amazonaws.com` service principals to call `sts:AssumeRole`. This establishes who may assume the role; it does not itself grant access to data or AWS APIs.
+### The Nine Permission Statements
 
-The inline `AgentCoreProjectPolicy` in the current template groups permissions by purpose:
+The inline `AgentCoreProjectPolicy` contains nine statements. Each statement groups actions that serve one part of the runtime:
 
-| Permission area | Example actions in the template | Resource scope shown in the template |
-|---|---|---|
-| Foundation models and guardrails | `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, `bedrock:ApplyGuardrail`, `bedrock:GetGuardrail` | `*` |
-| Knowledge Base retrieval | `bedrock:Retrieve`, `bedrock:GetKnowledgeBase` | `*` |
-| Runtime configuration lookup | `cloudformation:ListExports`, `cloudformation:DescribeStacks`, `sts:GetCallerIdentity` | `*` |
-| Logs and tracing | CloudWatch Logs write/read actions and X-Ray trace/sampling actions | `*` |
-| AgentCore Memory | Event, memory-record, and workload-token actions | `*` |
-| DynamoDB application state | `GetItem`, `PutItem`, `UpdateItem`, `Query`, `Scan` | ARNs of the three project tables |
-| Policy documents | `GetObject`, `GetObjectVersion`, `PutObject`, `DeleteObject`, `ListBucket` | Policy bucket ARN and its object ARNs |
-| S3 Vectors | `s3vectors:*` | `*` |
+| # | Statement | Why the runtime needs it | Resource scope in the template |
+|---:|---|---|---|
+| 1 | `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, `bedrock:ApplyGuardrail`, `bedrock:GetGuardrail` | Invoke foundation models and apply/read guardrail configuration. | `"*"` |
+| 2 | `bedrock:Retrieve`, `bedrock:GetKnowledgeBase` | Retrieve content from the policy Knowledge Bases. | `"*"` |
+| 3 | `cloudformation:ListExports`, `cloudformation:DescribeStacks`, `sts:GetCallerIdentity` | Let runtime configuration code discover stack exports and caller/account identity. | `"*"` |
+| 4 | CloudWatch Logs actions (`CreateLogGroup`, `CreateLogStream`, `CreateLogDelivery`, `PutLogEvents`, `DescribeLogGroups`, `DescribeLogStreams`) | Create and write agent execution logs and inspect log groups/streams. | `"*"` |
+| 5 | X-Ray actions (`PutTraceSegments`, `PutTelemetryRecords`, `GetSamplingRules`, `GetSamplingTargets`) | Send distributed trace data and retrieve sampling configuration. | `"*"` |
+| 6 | AgentCore Memory event, memory-record, and workload-token actions | Store and retrieve memory events/records and obtain workload access tokens. | `"*"` |
+| 7 | DynamoDB `GetItem`, `PutItem`, `UpdateItem`, `Query`, `Scan` | Read or update customer, order, and workflow-state data. | The three table ARNs referenced by `!GetAtt`. |
+| 8 | S3 `GetObject`, `GetObjectVersion`, `PutObject`, `DeleteObject`, `ListBucket` | List and manage policy documents, including uploads and reads for ingestion/sync. | The policy bucket ARN and its object ARNs. |
+| 9 | `s3vectors:*` | Allow vector-store operations for the Knowledge Base integration. | `"*"` |
 
-This is the current project configuration, not yet a production least-privilege design. Several service permissions use `Resource: "*"`, and `s3vectors:*` is broad. Before production, determine the exact resources and actions required and scope policies down wherever AWS supports resource-level permissions. Remove permissions for planned services until they are needed. Also review whether each agent should receive a narrower role rather than sharing one execution role.
+`"Resource": "*"` is broad: it is not restricted to one named resource. Some AWS actions do not support resource-level scoping, but where they do, production policies should use the narrowest applicable ARNs and actions. In particular, `s3vectors:*` grants every S3 Vectors action allowed by the service authorization model; review and narrow it before production.
+
+### CloudFormation and YAML Syntax in the Policy
+
+| Syntax | Meaning in this template |
+|---|---|
+| `!GetAtt OrdersTable.Arn` | Reads the Orders table ARN. It also creates an implicit dependency, so CloudFormation creates the table before the role policy that references it. |
+| `!GetAtt CustomersTable.Arn` and `!GetAtt WorkflowStateTable.Arn` | Restrict DynamoDB actions to the other two table ARNs as well. |
+| `!GetAtt PolicyDocumentsBucket.Arn` | Identifies the bucket itself; this ARN is used for bucket-level actions such as `s3:ListBucket`. |
+| `!Sub ${PolicyDocumentsBucket.Arn}/*` | Builds the object ARN pattern for objects inside the bucket. The bucket ARN alone does not cover object-level actions. |
+| `Resource: "*"` | Must be quoted in YAML because an unquoted leading `*` is the YAML alias indicator. |
+
+| Review note | Why it matters |
+|---|---|
+| Current configuration is not yet a production least-privilege design. | Some service statements use `Resource: "*"`, and `s3vectors:*` allows all S3 Vectors actions supported by the service authorization model. |
+| Narrow permissions before production. | Identify the exact required actions and resources, then use resource-level ARNs wherever AWS supports them. |
+| Remove unneeded permissions. | Permissions for planned services should be removed until those services are actually required. |
+| Consider per-agent roles. | Separate, narrower roles can reduce the impact of an agent or tool error compared with one shared execution role. |
 
 The IAM screenshots in section 20.5 are deployment evidence for the `udacity-agentcore-agentcore-role`, its `AgentCoreProjectPolicy`, the trusted Bedrock service principals, and the policy permissions shown in the AWS Console. The role and policy are deployed. The CloudFormation template records the policy configuration maintained in the repository.
 
@@ -647,7 +668,37 @@ Additional controls should include:
 
 ## 15. Observability
 
-The planned observability stack should combine:
+The infrastructure now creates a CloudWatch Logs log group for the planned AgentCore runtime. The log destination exists, but the application/runtime is not implemented, so this does not yet prove that agent logs are being written. The template does not yet configure X-Ray infrastructure, though the IAM role contains X-Ray actions.
+
+### CloudWatch Log Group
+
+CloudWatch Logs organizes log events into **log groups** and **log streams**. A log group is the named container for related logs; a log stream is a sequence of events from a particular source or execution. The CloudFormation resource is:
+
+```yaml
+AgentLogGroup:
+  Type: AWS::Logs::LogGroup
+  Properties:
+    LogGroupName: !Sub /aws/bedrock/agentcore/${ProjectName}
+    RetentionInDays: 14
+```
+
+| Template line/property | Resolved value | Meaning |
+|---|---|---|
+| `Type` | `AWS::Logs::LogGroup` | Create a CloudWatch Logs log group. |
+| `LogGroupName` | `/aws/bedrock/agentcore/udacity-agentcore` | `!Sub` replaces `${ProjectName}` with the stack parameter. The path is a naming convention. |
+| `RetentionInDays` | `14` | CloudWatch Logs retains log events for 14 days, then deletes expired events. |
+
+The role includes log-writing permissions, and the project configuration notes plan to provide this group name to runtime code. However, the current `config.py` does not define `AGENT_LOG_GROUP`, and the CloudFormation template does not yet export the log-group name under `Outputs`. Those are follow-up integration steps; do not imply the running agents already write here.
+
+An empty log group has no log-event ingestion or stored log data yet, but it does not mean all CloudWatch resources or future logging are free. Ingestion, storage, and other features can incur charges. A finite retention period limits stored-event lifetime.
+
+The first screenshot explains the intended log-group/stream relationship. The second shows the deployed log group and its two-week retention setting.
+
+![CloudWatch log group and log stream concept explanation](./images/cloudwatch-log-group-explainer.png)
+
+![AgentCore CloudWatch log group in the AWS Console with two-week retention](./images/agentcore-log-group-console.png)
+
+The broader planned observability stack may later combine:
 
 - Amazon CloudWatch metrics and logs.
 - AWS X-Ray distributed traces.
@@ -728,10 +779,11 @@ The project is partially complete. The following status distinctions are importa
 - S3 Vectors bucket and Returns, Shipping, and Warranty indexes are visible in the AWS Console.
 - Returns vector index overview shows dimension `1024` and cosine distance metric.
 - `udacity-agentcore-agentcore-role` is visible in IAM with the `AgentCoreProjectPolicy` inline policy name and Bedrock / Bedrock AgentCore trusted-service principals.
+- CloudWatch log group `/aws/bedrock/agentcore/udacity-agentcore` is visible with a two-week retention setting; log-event ingestion by an application runtime is not yet verified.
 
 ### Present in the Repository
 
-- CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, and AgentCore execution role with its trust and permissions policies; the template passes `cfn-lint`.
+- CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - Python configuration settings and a package scaffold.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
@@ -747,7 +799,7 @@ The project is partially complete. The following status distinctions are importa
 - AgentCore runtime deployment.
 - Bedrock Guardrails.
 - Production least-privilege IAM review and any further role separation.
-- CloudWatch and X-Ray observability.
+- Runtime log configuration/export, actual log ingestion, and X-Ray observability.
 - End-to-end RAG evaluation.
 
 This project is an **in-progress architecture and infrastructure implementation**, not a completed or production-ready multi-agent application. The diagrams and planned flows describe the target state. They must not be presented as evidence that the full system is already running.
@@ -912,7 +964,15 @@ These screenshots provide AWS Console evidence of the deployed IAM role and conf
 
 ![IAM policy editor showing a policy modification in progress](./images/agentcore-policy-editor.png)
 
-### 20.6 Intended Agent Architecture and Request Flows
+### 20.6 CloudWatch Log Group Evidence
+
+The first image is a conceptual reference for log groups and log streams. The second is AWS Console evidence that the project log group exists and has a two-week retention setting. Neither image shows agent log events being emitted by a running application.
+
+![CloudWatch log-group concept](./images/cloudwatch-log-group-explainer.png)
+
+![Deployed AgentCore log group and retention in CloudWatch](./images/agentcore-log-group-console.png)
+
+### 20.7 Intended Agent Architecture and Request Flows
 
 These diagrams communicate the target design; they are not screenshots of a running agent application.
 
@@ -926,7 +986,7 @@ These diagrams communicate the target design; they are not screenshots of a runn
 
 ![Example request-routing scenarios](../diagrams/request-flow-scenarios.png)
 
-### 20.7 CloudFormation Study Diagrams
+### 20.8 CloudFormation Study Diagrams
 
 These images are retained from CloudFormation study and preparation notes. They support the concepts discussed in section 4 and are learning references, not deployment evidence.
 
@@ -946,7 +1006,7 @@ These images are retained from CloudFormation study and preparation notes. They 
 
 ![CloudFormation study diagram 7](./images/theory/image-7.png)
 
-### 20.8 Architecture Preparation Sketches
+### 20.9 Architecture Preparation Sketches
 
 These images are architecture-learning sketches kept in the preparation folder. They are references rather than implementation evidence.
 

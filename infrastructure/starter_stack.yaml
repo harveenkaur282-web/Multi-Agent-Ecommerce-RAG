@@ -249,3 +249,14 @@ Resources:
                 Action:
                   - s3vectors:*
                 Resource: "*"
+
+  # ─────────────────────────────────────────────
+  # CLOUDWATCH - Log Groups
+  # ─────────────────────────────────────────────
+
+  AgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/bedrock/agentcore/${ProjectName}
+      RetentionInDays: 14
+
