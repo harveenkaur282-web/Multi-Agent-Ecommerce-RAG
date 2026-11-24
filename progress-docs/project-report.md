@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables are deployed and verified. The policy-documents S3 bucket and S3 Vectors bucket are visible in the AWS Console. The vector bucket shows all three policy indexes, and the Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified. The Bedrock Knowledge Bases, agent implementation, AgentCore runtime, and production controls are still planned. Architecture diagrams show the intended design, not a running end-to-end system.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, and an AgentCore IAM role are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified. Bedrock Knowledge Bases, agent implementation, AgentCore runtime, and production hardening are still planned. Architecture diagrams show the intended design, not a running end-to-end system.
 
 ## 1. Project Overview
 
@@ -507,7 +507,7 @@ Verified:
 
 Deployment evidence is stored in [progress-docs/images](./images/).
 
-The current template still does not define runtime application code, IAM roles, Bedrock Guardrails, AgentCore runtime resources, observability resources, or populated business data.
+The current template defines an AgentCore execution IAM role, but does not define runtime application code, Bedrock Guardrails, AgentCore runtime resources, observability resources, or populated business data.
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -599,7 +599,35 @@ Recommended controls include:
 
 ## 14. Security and Permissions
 
-The architecture should follow least-privilege access:
+The template defines `AgentCoreExecutionRole`, named from the `ProjectName` parameter. An execution role is an IAM identity that an AWS service can assume to obtain temporary credentials while running the workload.
+
+IAM has two separate policy ideas:
+
+| Policy | Template property | Question it answers |
+|---|---|---|
+| Trust policy | `AssumeRolePolicyDocument` | Which principals may assume this role? |
+| Permissions policy | `Policies` → `PolicyDocument` | What may a principal do after assuming the role? |
+
+The trust policy allows the `bedrock.amazonaws.com` and `bedrock-agentcore.amazonaws.com` service principals to call `sts:AssumeRole`. This establishes who may assume the role; it does not itself grant access to data or AWS APIs.
+
+The inline `AgentCoreProjectPolicy` in the current template groups permissions by purpose:
+
+| Permission area | Example actions in the template | Resource scope shown in the template |
+|---|---|---|
+| Foundation models and guardrails | `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, `bedrock:ApplyGuardrail`, `bedrock:GetGuardrail` | `*` |
+| Knowledge Base retrieval | `bedrock:Retrieve`, `bedrock:GetKnowledgeBase` | `*` |
+| Runtime configuration lookup | `cloudformation:ListExports`, `cloudformation:DescribeStacks`, `sts:GetCallerIdentity` | `*` |
+| Logs and tracing | CloudWatch Logs write/read actions and X-Ray trace/sampling actions | `*` |
+| AgentCore Memory | Event, memory-record, and workload-token actions | `*` |
+| DynamoDB application state | `GetItem`, `PutItem`, `UpdateItem`, `Query`, `Scan` | ARNs of the three project tables |
+| Policy documents | `GetObject`, `GetObjectVersion`, `PutObject`, `DeleteObject`, `ListBucket` | Policy bucket ARN and its object ARNs |
+| S3 Vectors | `s3vectors:*` | `*` |
+
+This is the current project configuration, not yet a production least-privilege design. Several service permissions use `Resource: "*"`, and `s3vectors:*` is broad. Before production, determine the exact resources and actions required and scope policies down wherever AWS supports resource-level permissions. Remove permissions for planned services until they are needed. Also review whether each agent should receive a narrower role rather than sharing one execution role.
+
+The IAM screenshots in section 20.5 are deployment evidence for the `udacity-agentcore-agentcore-role`, its `AgentCoreProjectPolicy`, the trusted Bedrock service principals, and the policy permissions shown in the AWS Console. The role and policy are deployed. The CloudFormation template records the policy configuration maintained in the repository.
+
+For the eventual per-agent design, permissions should be separated according to responsibility:
 
 - The Inventory Agent gets read access only to the required DynamoDB tables.
 - The Policy Agent gets read access only to its Knowledge Base resources.
@@ -696,16 +724,14 @@ The project is partially complete. The following status distinctions are importa
 - DynamoDB Customers table.
 - DynamoDB Orders table with TTL and Stream.
 - DynamoDB Workflow State table.
-
-### Deployed and Verified in AWS
-
 - Policy-documents S3 bucket is visible in the AWS Console; versioning and encryption settings still need separate verification.
 - S3 Vectors bucket and Returns, Shipping, and Warranty indexes are visible in the AWS Console.
 - Returns vector index overview shows dimension `1024` and cosine distance metric.
+- `udacity-agentcore-agentcore-role` is visible in IAM with the `AgentCoreProjectPolicy` inline policy name and Bedrock / Bedrock AgentCore trusted-service principals.
 
 ### Present in the Repository
 
-- CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, and three indexes; the template passes `cfn-lint`.
+- CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, and AgentCore execution role with its trust and permissions policies; the template passes `cfn-lint`.
 - Python configuration settings and a package scaffold.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
@@ -720,7 +746,7 @@ The project is partially complete. The following status distinctions are importa
 - Refund decision logic.
 - AgentCore runtime deployment.
 - Bedrock Guardrails.
-- IAM roles and least-privilege policies.
+- Production least-privilege IAM review and any further role separation.
 - CloudWatch and X-Ray observability.
 - End-to-end RAG evaluation.
 
@@ -874,7 +900,19 @@ This reference image summarizes the principal S3 Vectors index properties and th
 
 ![Reference table explaining S3 Vectors index properties](./images/vector-index-properties-reference.png)
 
-### 20.5 Intended Agent Architecture and Request Flows
+### 20.5 AgentCore IAM Role Evidence
+
+These screenshots provide AWS Console evidence of the deployed IAM role and configuration: the role list shows the role, the permissions page shows the inline policy, the trust relationship shows its trusted service principals, and the policy editor shows the deployed policy statements.
+
+![AgentCore execution role visible in IAM Roles](./images/agentcore-iam-role-list.png)
+
+![AgentCoreProjectPolicy listed on the role permissions page](./images/agentcore-role-inline-policy.png)
+
+![Trusted service principals in the AgentCore role trust relationship](./images/agentcore-role-trust-relationship.png)
+
+![IAM policy editor showing a policy modification in progress](./images/agentcore-policy-editor.png)
+
+### 20.6 Intended Agent Architecture and Request Flows
 
 These diagrams communicate the target design; they are not screenshots of a running agent application.
 
@@ -888,7 +926,7 @@ These diagrams communicate the target design; they are not screenshots of a runn
 
 ![Example request-routing scenarios](../diagrams/request-flow-scenarios.png)
 
-### 20.6 CloudFormation Study Diagrams
+### 20.7 CloudFormation Study Diagrams
 
 These images are retained from CloudFormation study and preparation notes. They support the concepts discussed in section 4 and are learning references, not deployment evidence.
 
@@ -908,7 +946,7 @@ These images are retained from CloudFormation study and preparation notes. They 
 
 ![CloudFormation study diagram 7](./images/theory/image-7.png)
 
-### 20.7 Architecture Preparation Sketches
+### 20.8 Architecture Preparation Sketches
 
 These images are architecture-learning sketches kept in the preparation folder. They are references rather than implementation evidence.
 

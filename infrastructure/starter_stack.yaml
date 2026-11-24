@@ -123,3 +123,129 @@ Resources:
       MetadataConfiguration:
         NonFilterableMetadataKeys:
           - AMAZON_BEDROCK_TEXT
+
+  # ─────────────────────────────────────────────
+  # IAM - Role for AgentCore
+  # ─────────────────────────────────────────────
+  # Assumed by the AgentCore Runtime (and usable by Bedrock). The deployed
+  # runtime imports the same config.py used locally, so it needs
+  # to read CloudFormation exports and download the code package from S3.
+
+  AgentCoreExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-agentcore-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - bedrock.amazonaws.com
+                - bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AgentCoreProjectPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              # Bedrock model invocation + guardrail enforcement
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                  - bedrock:ApplyGuardrail
+                  - bedrock:GetGuardrail
+                Resource: "*"
+
+              # Bedrock Knowledge Base retrieval
+              # Used by the three policy retriever agents
+              # (ReturnsPolicyRetrieverAgent, ShippingPolicyRetrieverAgent,
+              #  WarrantyPolicyRetrieverAgent) to call bedrock-agent-runtime.retrieve()
+              - Effect: Allow
+                Action:
+                  - bedrock:Retrieve
+                  - bedrock:GetKnowledgeBase
+                Resource: "*"
+
+              # CloudFormation exports + caller identity - read by config.py
+              # inside the deployed runtime (the same code path used locally)
+              - Effect: Allow
+                Action:
+                  - cloudformation:ListExports
+                  - cloudformation:DescribeStacks
+                  - sts:GetCallerIdentity
+                Resource: "*"
+
+              # CloudWatch Logs - agent execution logs (Task 6: Observability)
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:CreateLogDelivery
+                  - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                Resource: "*"
+
+              # X-Ray - distributed tracing (Task 6: Observability)
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+
+              # AgentCore Memory - event storage for session summaries (Task 4)
+              - Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateEvent
+                  - bedrock-agentcore:GetEvent
+                  - bedrock-agentcore:ListEvents
+                  - bedrock-agentcore:GetMemory
+                  - bedrock-agentcore:ListMemories
+                  - bedrock-agentcore:RetrieveMemoryRecords
+                  - bedrock-agentcore:ListMemoryRecords
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock-agentcore:GetWorkloadAccessTokenForUserId
+                Resource: "*"
+
+              # DynamoDB - all tables the agents read/write
+              # OrdersTable:        InventoryAgent (read), RefundAgent (write)
+              # CustomersTable:     InventoryAgent (read), RefundAgent (read fallback)
+              # WorkflowStateTable: OrchestratorAgent (read + write, optimistic lock)
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt OrdersTable.Arn
+                  - !GetAtt CustomersTable.Arn
+                  - !GetAtt WorkflowStateTable.Arn
+
+              # S3 - policy documents bucket
+              # Used by seed_data.py to upload docs and by Bedrock KB sync.
+              # (The AgentCore CLI stores the runtime code package in the CDK
+              # assets bucket, not here.)
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt PolicyDocumentsBucket.Arn
+                  - !Sub ${PolicyDocumentsBucket.Arn}/*
+
+              # S3 Vectors - backing store for Bedrock Knowledge Bases (Task 5)
+              - Effect: Allow
+                Action:
+                  - s3vectors:*
+                Resource: "*"
