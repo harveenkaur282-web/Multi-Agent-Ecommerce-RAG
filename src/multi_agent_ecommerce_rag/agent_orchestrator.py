@@ -25,15 +25,15 @@ OrchestratorAgent creates state at start, each routing tool reads and
 updates it after the worker responds.
 
 Commands:
-  python src/agent_orchestrator.py test            # 3 scenarios, local run, traced to X-Ray
-  python src/agent_orchestrator.py chat            # interactive terminal chat
-  python src/agent_orchestrator.py deploy          # Tasks 3-6 deployment pipeline (uses the AgentCore CLI)
-  python src/agent_orchestrator.py invoke "<msg>"  # call the deployed AgentCore Runtime
-  python src/agent_orchestrator.py serve           # HTTP server (what AgentCore Runtime runs)
+  uv run --project <repo-root> python -m multi_agent_ecommerce_rag.agent_orchestrator test
+  uv run --project <repo-root> python -m multi_agent_ecommerce_rag.agent_orchestrator chat
+  uv run --project <repo-root> python -m multi_agent_ecommerce_rag.agent_orchestrator deploy
+  uv run --project <repo-root> python -m multi_agent_ecommerce_rag.agent_orchestrator invoke "<msg>"
+  uv run --project <repo-root> python -m multi_agent_ecommerce_rag.agent_orchestrator serve
 
 Deployment uses the AgentCore CLI (`agentcore`, npm package @aws/agentcore,
 https://github.com/aws/agentcore-cli) through the pre-written helper
-src/agentcore_cli.py - see the README for the prerequisites (Node.js 20+, uv).
+agentcore_cli.py - see the README for the prerequisites (Node.js 20+, uv).
 """
 
 import boto3
@@ -47,11 +47,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-# Ensure the parent directory is on sys.path so config.py and
-# bedrock_kb_retrieval.py are importable regardless of where this
-# script is invoked from (e.g. python src/agent_orchestrator.py)
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Resolve local imports from this file's location, not the current directory.
+# Run through uv so third-party dependencies come from this project's environment.
+_PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(_PACKAGE_DIR))
+for _import_path in (_PROJECT_ROOT, _PACKAGE_DIR):
+    if _import_path not in sys.path:
+        sys.path.insert(0, _import_path)
 
 # Strands Agents SDK - see: https://github.com/strands-agents/sdk-python
 from strands import Agent
@@ -1179,7 +1181,8 @@ def deploy_all():
     print(f"  GUARDRAIL_ID={guardrail_id}")
     print(f"  GUARDRAIL_VERSION={guardrail_version}\n")
     print(f"  Then try the deployed runtime:")
-    print(f"  python src/agent_orchestrator.py invoke \"What is the return policy for premium customers?\"")
+    print("  uv run python -m multi_agent_ecommerce_rag.agent_orchestrator invoke "
+          "\"What is the return policy for premium customers?\"")
     print(f"  or with the CLI:  agentcore invoke \"What is the return policy for premium customers?\"")
     print(f"  (agentcore status / agentcore logs show the deployed runtime and its logs)\n")
     return runtime_arn, guardrail_id
@@ -1412,14 +1415,16 @@ if __name__ == '__main__':
 
     elif command == 'invoke':
         if len(sys.argv) < 3:
-            print('Usage: python src/agent_orchestrator.py invoke "<message>" [CUSTOMER_ID]')
+            print('Usage: uv run python -m multi_agent_ecommerce_rag.agent_orchestrator '
+                  'invoke "<message>" [CUSTOMER_ID]')
             sys.exit(1)
         run_invoke(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "CUST-001")
 
     else:
         print("Usage:")
-        print("  python src/agent_orchestrator.py deploy           # Deploy to AgentCore (Tasks 3-6)")
-        print("  python src/agent_orchestrator.py test             # Run the 3 test scenarios locally")
-        print("  python src/agent_orchestrator.py chat             # Interactive terminal chat")
-        print("  python src/agent_orchestrator.py invoke \"<msg>\"   # Call the deployed runtime")
-        print("  python src/agent_orchestrator.py serve            # HTTP server (used inside AgentCore Runtime)")
+        command = "uv run python -m multi_agent_ecommerce_rag.agent_orchestrator"
+        print(f"  {command} deploy           # Deploy to AgentCore")
+        print(f"  {command} test             # Run the 3 test scenarios locally")
+        print(f"  {command} chat             # Interactive terminal chat")
+        print(f"  {command} invoke \"<msg>\"   # Call the deployed runtime")
+        print(f"  {command} serve            # HTTP server (used inside AgentCore Runtime)")
