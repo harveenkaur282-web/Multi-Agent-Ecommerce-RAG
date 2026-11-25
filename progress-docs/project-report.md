@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. Inventory Agent implementation is underway: its model, prompt, and three DynamoDB lookup tools are written, but Agent construction remains a TODO. Bedrock Knowledge Bases and the AgentCore runtime are not deployed. Architecture diagrams show the intended design, not a running end-to-end system.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. The Inventory Agent's model, prompt, three DynamoDB lookup tools, and `Agent` construction are implemented; live AWS integration and agent behavior have not yet been validated. Bedrock Knowledge Bases and the AgentCore runtime are not deployed. Architecture diagrams show the intended design, not a running end-to-end system.
 
 ## 1. Project Overview
 
@@ -76,7 +76,7 @@ The project was built incrementally. Each implementation step below has its code
 | 4 | Added the AgentCore execution role and CloudWatch log group (`64a4ac7`, `a13c922`). | Sections 14–15: trust/permissions and log-group snippets followed by their console evidence. |
 | 5 | Added CloudFormation exports and Python configuration (`6979d8c`, `152d855`, `abc646e`). | Sections 5 and 10: Outputs snippet/table and the `config.py` run screenshot. |
 | 6 | Added deterministic seed data for DynamoDB and policy documents (`ed9350f`). | Section 11: seed write snippet, terminal run, then DynamoDB/S3 verification screenshots. |
-| 7 | Added the agent package and implemented Inventory Agent setup and three DynamoDB data tools (`f92ea25`, `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, `c50db65`, plus the current order-history work). | Section 11: model/prompt progress, DynamoDB tool code snapshots, and the remaining Agent-construction TODO. |
+| 7 | Added the agent package, Inventory Agent setup, three DynamoDB data tools, and Agent construction (`f92ea25`, `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, `c50db65`, `9718322`). | Section 11: model/prompt, DynamoDB tool code snapshots, and the `Agent` assembly added in `9718322`. |
 
 ### Agent Responsibilities
 
@@ -672,7 +672,17 @@ The following S3 console views verify the policy bucket prefix, the three policy
 
 ### Step 8 — Inventory Agent Implementation Progress
 
-**Checkpoint — 2026-11-25:** The Inventory Agent model and prompt, and all three DynamoDB data tools, are now implemented. The committed progress so far includes `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, and `c50db65`; the order-history implementation in the current working tree is not yet represented by a commit:
+**Checkpoint — 2026-11-26:** The Inventory Agent model and prompt, all three DynamoDB data tools, and assembly into a Strands `Agent` are implemented. The work is recorded across commits `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, `c50db65`, and `9718322`. The latest commit, `9718322` (`feat(inventory-agent): instantiated and returned the agent`), replaces the construction TODO with:
+
+```python
+return Agent(
+    model=model,
+    system_prompt=system_prompt,
+    tools=[check_order_status, get_customer_tier, list_customer_orders],
+)
+```
+
+This connects the configured model and fact-focused prompt to the three implemented DynamoDB tools and returns the resulting agent from `build_inventory_agent()`.
 
 1. Construct a Strands `BedrockModel` using `config.WORKER_MODEL_ID` and `config.AWS_REGION`, rather than hard-coding the model identifier or region in the agent.
 2. Write the Inventory Agent system prompt to restrict it to retrieving and reporting facts. It must not invent records or make refund/return eligibility decisions.
@@ -731,7 +741,7 @@ return {
 
 Serializing the records before returning them avoids JSON-serialization errors when DynamoDB numeric attributes are represented as `Decimal`. The zero-orders response is intentionally explicit, and the `count` is computed after pagination so it describes the full result set.
 
-The low temperature is intended to reduce variation for a fact-retrieval role; it does not guarantee identical outputs. All three Inventory data tools are implemented, but `build_inventory_agent()` does not yet construct or return an `Agent`, so the tools are not yet assembled into a usable Inventory Agent. The commits document implementation changes, not a successful live AWS integration test. Next, instantiate the Inventory Agent with its model, prompt, and tools, then test the agent and its data tools.
+The low temperature is intended to reduce variation for a fact-retrieval role; it does not guarantee identical outputs. `build_inventory_agent()` now assembles and returns the `Agent` with its model, prompt, and tools. The commits document implementation changes, not a successful live AWS integration test. Next, test the agent and its data tools, including their behavior against the configured AWS resources.
 
 The deployed resources are infrastructure, not a complete application. Agent code is in progress; Knowledge Bases, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
 
@@ -995,14 +1005,14 @@ The project is partially complete. The following status distinctions are importa
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
-- Python configuration and package code, including Inventory Agent model/prompt setup and three DynamoDB data tools; progress and remaining TODOs are recorded in section 11.
+- Python configuration and package code, including Inventory Agent model/prompt setup, three DynamoDB data tools, and Agent construction; implementation details and validation limits are recorded in section 11.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
 
 ### Not Yet Implemented or Verified
 
 - Bedrock Knowledge Base creation and synchronization.
-- Complete orchestrator and specialist-agent implementation. Inventory Agent construction remains a TODO; other agent builders and orchestration steps also remain incomplete.
+- Complete orchestrator and specialist-agent implementation. Inventory Agent construction is implemented, but other agent builders and orchestration steps remain incomplete.
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
 - Policy retrieval, workflow-state operations, and refund mutations. The Inventory order lookup, customer lookup, and customer order-history tools are implemented.
 - Workflow-state optimistic locking.
