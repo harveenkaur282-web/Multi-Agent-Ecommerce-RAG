@@ -311,7 +311,6 @@ def build_inventory_agent() -> Agent:
                 "error": f"Customer lookup failed: {exc.response['Error']['Code']}"
             }
 
-    # TODO: Implement list_customer_orders
     @tool
     def list_customer_orders(customer_id: str) -> dict:
         """
@@ -321,9 +320,39 @@ def build_inventory_agent() -> Agent:
             customer_id: The customer's unique identifier
 
         Returns:
-            List of all orders with order_id, status, order_date, and amount
+            Customer ID, order count, and JSON-safe orders, or an error result
         """
-        pass
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        try:
+            response = table.query(
+                KeyConditionExpression=Key("customer_id").eq(customer_id)
+            )
+            orders = response.get("Items", [])
+            while response.get("LastEvaluatedKey"):
+                response = table.query(
+                    KeyConditionExpression=Key("customer_id").eq(customer_id),
+                    ExclusiveStartKey=response["LastEvaluatedKey"],
+                )
+                orders.extend(response.get("Items", []))
+            orders = json.loads(json.dumps(orders, default=str))
+            if not orders:
+                return {
+                    "customer_id": customer_id,
+                    "count": 0,
+                    "orders": [],
+                    "message": f"No orders found for customer {customer_id}.",
+                }
+            return {
+                "customer_id": customer_id,
+                "count": len(orders),
+                "orders": orders,
+            }
+
+        except ClientError as exc:
+            logger.exception("Order history lookup failed")
+            return {
+                "error": f"Order history lookup failed: {exc.response['Error']['Code']}"
+            }
 
     # TODO: Instantiate and return the Agent
     pass
