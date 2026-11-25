@@ -320,7 +320,7 @@ def build_inventory_agent() -> Agent:
             customer_id: The customer's unique identifier
 
         Returns:
-            Customer ID, order count, and JSON-safe orders, or an error result
+            List of all orders with order_id, status, order_date, and amount
         """
         table = dynamodb.Table(config.ORDERS_TABLE)
         try:
