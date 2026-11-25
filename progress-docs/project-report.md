@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. The Inventory Agent's model, prompt, three DynamoDB lookup tools, and `Agent` construction are implemented; live AWS integration and agent behavior have not yet been validated. Bedrock Knowledge Bases and the AgentCore runtime are not deployed. Architecture diagrams show the intended design, not a running end-to-end system.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. Local CLI smoke tests have exercised Inventory Agent customer/order lookups, including successful results and not-found cases; broader automated testing and validation remain pending. Bedrock Knowledge Bases and the AgentCore runtime are not deployed. Architecture diagrams show the intended design, not a running end-to-end system.
 
 ## 1. Project Overview
 
@@ -741,7 +741,44 @@ return {
 
 Serializing the records before returning them avoids JSON-serialization errors when DynamoDB numeric attributes are represented as `Decimal`. The zero-orders response is intentionally explicit, and the `count` is computed after pagination so it describes the full result set.
 
-The low temperature is intended to reduce variation for a fact-retrieval role; it does not guarantee identical outputs. `build_inventory_agent()` now assembles and returns the `Agent` with its model, prompt, and tools. The commits document implementation changes, not a successful live AWS integration test. Next, test the agent and its data tools, including their behavior against the configured AWS resources.
+#### CLI Smoke Test — 2026-11-26
+
+The Inventory Agent was invoked locally using its package-qualified module path:
+
+```powershell
+python -c "import sys; sys.path.insert(0,'src'); from multi_agent_ecommerce_rag.agent_orchestrator import build_inventory_agent; agent=build_inventory_agent(); print(agent('What tier is customer CUST-001, and list their orders?'))"
+```
+
+The invocation completed. The output showed calls to `get_customer_tier` and `list_customer_orders`, and the agent reported customer `CUST-001` as Premium with three order records:
+
+| Order | Product | Date | Status | Price |
+|---|---|---|---|---:|
+| `ORD-27176` | Wireless Headphones Pro (Electronics) | 2026-11-12 | Delivered | $149.99 |
+| `ORD-27177` | Smart Watch Series 5 (Electronics) | 2026-11-21 | Shipped; estimated delivery 2026-11-26 | $299.99 |
+| `ORD-27180` | Coffee Maker Deluxe (Appliances) | 2026-08-21 | Delivered | $79.99 |
+
+The customer profile also reported `Total Orders: 47`, while the order-history tool returned three records. This smoke-test output does not establish whether those values are consistent; reconcile the profile count with the seeded/queryable order data before treating the full history as verified.
+
+The not-found path was also checked with customer ID `CUST-999`:
+
+```powershell
+python -c "import sys; sys.path.insert(0,'src'); from multi_agent_ecommerce_rag.agent_orchestrator import build_inventory_agent; agent=build_inventory_agent(); print(agent('What tier is customer CUST-999, and list their orders?'))"
+```
+
+The agent called `get_customer_tier` and `list_customer_orders`. Both reported that `CUST-999` has no customer profile or associated orders, and the final response clearly stated that the customer was not found. This confirms the observed not-found behavior for this invocation; it is not a substitute for automated edge-case tests.
+
+Additional order-lookup and fact-gathering prompts were run using the same CLI pattern:
+
+| Prompt scenario | Tool calls and observed result |
+|---|---|
+| Check `ORD-27176` for `CUST-001`. | `check_order_status` returned the Wireless Headphones Pro order: delivered, dated November 12, 2026, priced at $149.99, with estimated delivery November 17 and tracking number `TRK1000000100`. |
+| Check nonexistent `ORD-99999` for `CUST-001`. | The tool and final response stated that the order was not found for this customer. |
+| Check `ORD-28001` for `CUST-001`. | The tool reported that the order was not found for that customer. A separate query below found the order under `CUST-002`, exercising the customer/order key pairing. |
+| Ask for the facts about `CUST-002`'s refund request for `ORD-28001`. | `check_order_status` and `get_customer_tier` returned a delivered Mechanical Keyboard K2 order dated October 10, 2026, priced at $89.99, and a Standard-tier customer with a 30-day return window. The agent summarized these facts without making an eligibility decision. |
+
+Some captured responses repeated tool details in the final answer; the returned order/customer facts were visible, but response concision can be reviewed during further prompt testing. These are manual local CLI smoke tests, not a full test suite or proof of end-to-end production readiness. Next, add focused automated tests for the agent and data tools, and investigate the difference between the profile's total-order count and the three records returned.
+
+The low temperature is intended to reduce variation for a fact-retrieval role; it does not guarantee identical outputs. `build_inventory_agent()` now assembles and returns the `Agent` with its model, prompt, and tools.
 
 The deployed resources are infrastructure, not a complete application. Agent code is in progress; Knowledge Bases, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
 
