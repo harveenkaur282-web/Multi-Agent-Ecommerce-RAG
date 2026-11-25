@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified. Agent implementation has started: the Inventory Agent model configuration and system prompt are written, but its data tools and Agent construction remain TODOs. Bedrock Knowledge Bases, AgentCore runtime, and production hardening are not complete. Architecture diagrams show the intended design, not a running end-to-end system.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified. Agent implementation has started: the Inventory Agent model, prompt, and two DynamoDB lookup tools are written; order-history retrieval and Agent construction remain TODOs. Bedrock Knowledge Bases, AgentCore runtime, and production hardening are not complete. Architecture diagrams show the intended design, not a running end-to-end system.
 
 ## 1. Project Overview
 
@@ -591,31 +591,26 @@ This follows the [Udacity starter instructions for seeding initial data](https:/
 
 ### Agent Implementation Progress: Inventory Agent
 
-**Checkpoint — 2026-11-25:** The first two setup steps in `build_inventory_agent()` are complete, as recorded in commits `a7b5a63` and `9ff912f`:
+**Checkpoint — 2026-11-25:** The Inventory Agent setup and two of its three DynamoDB tools have been implemented, as recorded in commits `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, and `c50db65`:
 
 1. Construct a Strands `BedrockModel` using `config.WORKER_MODEL_ID` and `config.AWS_REGION`, rather than hard-coding the model identifier or region in the agent.
 2. Write the Inventory Agent system prompt to restrict it to retrieving and reporting facts. It must not invent records or make refund/return eligibility decisions.
+3. Implement `check_order_status`: retrieve one order using both `customer_id` and `order_id`, matching the Orders table's composite key; return a clear not-found result when absent; catch and log DynamoDB `ClientError`; convert DynamoDB `Decimal` values to strings so results can be serialized as JSON.
+4. Implement `get_customer_tier`: retrieve one customer by the Customers table's `customer_id` key, return a not-found result when absent, log DynamoDB `ClientError`, and JSON-normalize the returned item.
 
-Current code snapshot:
+The essential tool-result handling now in the code is:
 
 ```python
-model = BedrockModel(model_id=config.WORKER_MODEL_ID, region_name=config.AWS_REGION, temperature=0.1)
-
-system_prompt = """You are NovaMart's Inventory Agent.
-    Use your tools to retrieve factual order and customer information.
-    Never invent order records, customer details, dates, or statuses.
-    You do not approve or deny refunds and you do not decide return eligibility.
-    Return the retrieved facts clearly.
-    - For an order, identify its order ID and use the customer ID supplied in the request.
-    - For a return or refund request, report the order status, product, order date and
-      price, and also look up and report the customer's tier.
-    - For account questions such as the customer's tier, use the customer tier tool.
-    - For order history, list the customer's orders.
-    - If information is missing or a record is not found, state that clearly.
-"""
+response = table.get_item(
+    Key={"customer_id": customer_id, "order_id": order_id}
+)
+item = response.get("Item")
+if not item:
+    return {"found": False, "message": "..."}
+return {"found": True, "order": json.loads(json.dumps(item, default=str))}
 ```
 
-The low temperature is intended to reduce variation for a fact-retrieval role; it does not guarantee identical outputs. The prompt describes intended behavior, but the agent is not functional yet: `check_order_status`, `get_customer_tier`, and `list_customer_orders` still contain `pass`, and `build_inventory_agent()` does not yet construct or return an `Agent`. Next, implement and test those DynamoDB tools, then instantiate the Inventory Agent with its model, prompt, and tools.
+The low temperature is intended to reduce variation for a fact-retrieval role; it does not guarantee identical outputs. `list_customer_orders()` still contains `pass`, and `build_inventory_agent()` does not yet construct or return an `Agent`, so the tools are not yet assembled into a usable Inventory Agent. The commits document implementation changes, not a successful live AWS integration test. Next, implement and test order-history retrieval, then instantiate the Inventory Agent with its model, prompt, and tools.
 
 The deployed resources are infrastructure, not a complete application. Agent code is in progress; Knowledge Bases, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
 
@@ -847,14 +842,14 @@ The project is partially complete. The following status distinctions are importa
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
-- Python configuration and package code, including a partially implemented Inventory Agent setup; progress and remaining TODOs are recorded in section 11.
+- Python configuration and package code, including Inventory Agent model/prompt setup and two DynamoDB lookup tools; progress and remaining TODOs are recorded in section 11.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
 
 ### Not Yet Implemented or Verified
 
 - Bedrock Knowledge Base creation and synchronization.
-- Complete orchestrator and specialist-agent implementation. The Inventory Agent model and prompt are started; its DynamoDB tools and Agent construction remain TODOs.
+- Complete orchestrator and specialist-agent implementation. Inventory Agent order-history retrieval and Agent construction remain TODOs; other agent builders and orchestration steps also remain incomplete.
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
 - Inventory and policy tools.
 - DynamoDB application records and CRUD operations.

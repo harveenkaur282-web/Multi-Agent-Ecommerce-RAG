@@ -280,7 +280,6 @@ def build_inventory_agent() -> Agent:
             logger.exception("Order lookup failed")
             return {"error": f"Order lookup failed: {exc.response['Error']['Code']}"}
 
-    # TODO: Implement get_customer_tier
     @tool
     def get_customer_tier(customer_id: str) -> dict:
         """
