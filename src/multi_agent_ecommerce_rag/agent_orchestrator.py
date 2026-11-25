@@ -46,6 +46,7 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
+from datetime import date 
 
 # Resolve local imports from this file's location, not the current directory.
 # Run through uv so third-party dependencies come from this project's environment.
@@ -374,11 +375,24 @@ def build_refund_agent() -> Agent:
     WorkflowState and applies the correct policy window per customer tier.
     """
 
-    # TODO: Create a BedrockModel
-    pass
+    model = BedrockModel(model_id=config.WORKER_MODEL_ID, region_name=config.AWS_REGION, temperature=0.1)
 
-    # TODO: System prompt for the Refund Agent
-    pass
+    system_prompt = f"""You are NovaMart's Refund Agent.
+    Today's date is {date.today().isoformat()}.
+
+    Decision process, always in this order:
+    1. Call get_inventory_context first to read the verified order and customer facts.
+    2. Check the order status. Only delivered orders can be returned. Orders that are
+    cancelled, processing, or shipped are not eligible.
+    3. Work out how many days have passed since the order date (from the facts) up to today's date.
+    4. Apply the customer's return window: 30 days for Standard customers and
+    60 days for Premium customers.
+    5. If eligible, call initiate_refund. If not eligible, do not call it and explain
+    why, stating the numbers used (for example: "ordered 45 days ago, window is 30").
+
+    Never invent an order date, tier, status, or amount. If a fact is missing, say so
+    instead of guessing. Always state your final decision clearly: approved or denied.
+    """
 
     # TODO: Implement get_inventory_context
     @tool
