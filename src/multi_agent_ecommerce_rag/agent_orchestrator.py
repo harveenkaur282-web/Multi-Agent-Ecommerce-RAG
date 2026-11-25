@@ -355,7 +355,11 @@ def build_inventory_agent() -> Agent:
             }
 
     # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+    model=model,
+    system_prompt=system_prompt,
+    tools=[check_order_status, get_customer_tier, list_customer_orders],
+    )
 
 
 # ───────────────────────────────────────────────────────
