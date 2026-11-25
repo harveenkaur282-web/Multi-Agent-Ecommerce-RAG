@@ -241,7 +241,6 @@ def build_inventory_agent() -> Agent:
     - If information is missing or a record is not found, state that clearly.
     """
 
-    # TODO: Implement check_order_status
     # NOTE: the Orders table has a COMPOSITE key (customer_id = partition key,
     # order_id = sort key), so a get_item needs BOTH values. That is why this
     # tool takes customer_id as well as order_id.
@@ -294,7 +293,24 @@ def build_inventory_agent() -> Agent:
         Returns:
             Customer profile including tier and account details
         """
-        pass
+        table = dynamodb.Table(config.CUSTOMERS_TABLE)
+        try:
+            response = table.get_item(Key={"customer_id": customer_id})
+            customer = response.get("Item")
+            if not customer:
+                return {
+                    "found": False,
+                    "message": f"Customer {customer_id} was not found.",
+                }
+            return {
+                "found": True,
+                "customer": json.loads(json.dumps(customer, default=str)),
+            }
+        except ClientError as exc:
+            logger.exception("Customer lookup failed")
+            return {
+                "error": f"Customer lookup failed: {exc.response['Error']['Code']}"
+            }
 
     # TODO: Implement list_customer_orders
     @tool
