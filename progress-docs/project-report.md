@@ -759,6 +759,14 @@ The invocation completed. The output showed calls to `get_customer_tier` and `li
 
 The customer profile also reported `Total Orders: 47`, while the order-history tool returned three records. This smoke-test output does not establish whether those values are consistent; reconcile the profile count with the seeded/queryable order data before treating the full history as verified.
 
+Terminal captures for the `CUST-001` tier and order-history response:
+
+![Inventory Agent returns customer tier and the first two orders for CUST-001](./images/inventory-agent-customer-001-order-history-1.png)
+
+![Continuation of the CUST-001 order-history output](./images/inventory-agent-customer-001-order-history-2.png)
+
+![Final portion of the CUST-001 order-history output](./images/inventory-agent-customer-001-order-history-3.png)
+
 The not-found path was also checked with customer ID `CUST-999`:
 
 ```powershell
@@ -766,6 +774,8 @@ python -c "import sys; sys.path.insert(0,'src'); from multi_agent_ecommerce_rag.
 ```
 
 The agent called `get_customer_tier` and `list_customer_orders`. Both reported that `CUST-999` has no customer profile or associated orders, and the final response clearly stated that the customer was not found. This confirms the observed not-found behavior for this invocation; it is not a substitute for automated edge-case tests.
+
+![Inventory Agent reports that CUST-999 has no customer profile or orders](./images/inventory-agent-customer-not-found.png)
 
 Additional order-lookup and fact-gathering prompts were run using the same CLI pattern:
 
@@ -775,6 +785,18 @@ Additional order-lookup and fact-gathering prompts were run using the same CLI p
 | Check nonexistent `ORD-99999` for `CUST-001`. | The tool and final response stated that the order was not found for this customer. |
 | Check `ORD-28001` for `CUST-001`. | The tool reported that the order was not found for that customer. A separate query below found the order under `CUST-002`, exercising the customer/order key pairing. |
 | Ask for the facts about `CUST-002`'s refund request for `ORD-28001`. | `check_order_status` and `get_customer_tier` returned a delivered Mechanical Keyboard K2 order dated October 10, 2026, priced at $89.99, and a Standard-tier customer with a 30-day return window. The agent summarized these facts without making an eligibility decision. |
+
+The terminal captures below provide evidence for these order lookup and refund-context checks:
+
+![Successful Inventory Agent lookup for order ORD-27176](./images/inventory-agent-order-status-success.png)
+
+![Inventory Agent reports unknown order ORD-99999](./images/inventory-agent-order-not-found.png)
+
+![Inventory Agent does not return ORD-28001 for the wrong customer ID](./images/inventory-agent-order-customer-mismatch.png)
+
+![Inventory Agent retrieves ORD-28001 and customer tier facts for CUST-002](./images/inventory-agent-customer-002-refund-facts-1.png)
+
+![Continuation of the CUST-002 refund-context response](./images/inventory-agent-customer-002-refund-facts-2.png)
 
 Some captured responses repeated tool details in the final answer; the returned order/customer facts were visible, but response concision can be reviewed during further prompt testing. These are manual local CLI smoke tests, not a full test suite or proof of end-to-end production readiness. Next, add focused automated tests for the agent and data tools, and investigate the difference between the profile's total-order count and the three records returned.
 
