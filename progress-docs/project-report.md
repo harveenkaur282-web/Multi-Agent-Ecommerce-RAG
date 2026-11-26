@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. Local CLI smoke tests have exercised Inventory Agent customer/order lookups, including successful results and not-found cases; broader automated testing and validation remain pending. Bedrock Knowledge Bases and the AgentCore runtime are not deployed. Architecture diagrams show the intended design, not a running end-to-end system.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. Inventory and Refund Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI smoke tests cover Inventory lookups; Refund Agent behavior and Workflow State concurrency are not yet verified. Policy retrieval, Communication Agent, and orchestrator routing remain incomplete. Bedrock Knowledge Bases and the AgentCore runtime are not deployed, so the end-to-end workflow is not running.
 
 ## 1. Project Overview
 
@@ -77,6 +77,7 @@ The project was built incrementally. Each implementation step below has its code
 | 5 | Added CloudFormation exports and Python configuration (`6979d8c`, `152d855`, `abc646e`). | Sections 5 and 10: Outputs snippet/table and the `config.py` run screenshot. |
 | 6 | Added deterministic seed data for DynamoDB and policy documents (`ed9350f`). | Section 11: seed write snippet, terminal run, then DynamoDB/S3 verification screenshots. |
 | 7 | Added the agent package, Inventory Agent setup, three DynamoDB data tools, and Agent construction (`f92ea25`, `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, `c50db65`, `9718322`). | Section 11: model/prompt, DynamoDB tool code snapshots, and the `Agent` assembly added in `9718322`. |
+| 8 | Implemented the Refund Agent model, date-aware eligibility prompt, Workflow State context tool, and conditional DynamoDB return mutation (`210d198`, `3b5b116`). The latter commit also assigns the Inventory Agent its explicit name. | Sections 7 and 11: Workflow State helper behavior and Refund Agent prompt/tool/assembly details; no Refund Agent runtime test is documented. |
 
 ### Agent Responsibilities
 
@@ -85,7 +86,7 @@ The project was built incrementally. Each implementation step below has its code
 | Orchestrator | Classify intent, route work, coordinate state, and determine completion |
 | Inventory | Retrieve customer details and order information |
 | Policy | Coordinate parallel retrieval from Returns, Shipping, and Warranty knowledge bases |
-| Refund | Evaluate refund or return eligibility using order data and policy results |
+| Refund | Evaluate return eligibility from verified order/customer facts and initiate a return when eligible |
 | Communication | Produce the final customer-facing response |
 
 Role specialization keeps each agent responsible for a distinct business function. It also makes prompts, tools, tests, permissions, and failure handling easier to isolate.
@@ -384,14 +385,14 @@ The Workflow State table was added in commit `8593507`. Its CloudFormation resou
 
 `session_id` is the partition key. Each session has one workflow-state item.
 
-Example state:
+Illustrative state fields:
 
 | session_id | customer_id | intent | version | status |
 |---|---|---|---:|---|
 | SESSION-001 | CUST-001 | order_status | 3 | awaiting_refund_result |
 | SESSION-002 | CUST-002 | refund | 1 | policy_retrieval |
 
-A real implementation could store:
+The workflow-state design can accumulate:
 
 - The customer identifier.
 - The order identifier.
@@ -404,18 +405,18 @@ A real implementation could store:
 
 ### Optimistic Locking
 
-Optimistic locking prevents stale concurrent updates. An agent would:
+The orchestration module implements `_create_workflow_state`, `_read_workflow_state`, and `_update_workflow_state`. Creation writes a UTC `created_at`, starts `version` at `0`, sets a 24-hour epoch TTL, and uses a conditional put so it does not overwrite an existing session. `_read_workflow_state()` retrieves a session by `session_id`. Updates use version-based optimistic locking:
 
-1. Read the item and record its `version`.
-2. Perform its work.
-3. Submit a conditional update only if the stored version still matches.
-4. Increment `version` if the update succeeds.
+1. Read the item and use its current `version`.
+2. Submit a conditional update only if the stored version matches.
+3. Increment `version` after a successful update.
+4. On a conflict, read the latest version and retry, up to three attempts.
 
-If another agent changes the item first, the stale update is rejected instead of silently overwriting the newer state.
+If another writer changes the item first, the stale update is rejected instead of silently overwriting newer state. This behavior is implemented in source but has not yet been verified with a concurrent-write test.
 
 The `version` attribute is application data. DynamoDB does not require it in `AttributeDefinitions` because `AttributeDefinitions` applies only to table indexes and primary-key attributes.
 
-TTL can later remove expired session records. It does not remove or cancel live state immediately and still requires application code to write an epoch timestamp.
+The create helper writes a 24-hour epoch TTL. DynamoDB expiry is asynchronous, so an expired record may remain for a while after its TTL time; the TTL behavior has not been verified through an application integration test.
 
 ## 8. Step 5 — Policy S3 Bucket and S3 Vectors
 
@@ -521,7 +522,9 @@ RAG is useful because a foundation model should answer policy questions from pro
 6. Compose a grounded customer response.
 7. Store final state and relevant trace metadata.
 
-The Policy Agent is planned to issue parallel requests to the Returns, Shipping, and Warranty knowledge bases. Parallelism reduces end-to-end latency when all policy domains might be relevant.
+The Policy Agent is planned to issue parallel requests to the Returns, Shipping, and Warranty knowledge bases. Parallelism reduces end-to-end latency when all policy domains might be relevant; the retriever and Policy Agent builders remain TODOs.
+
+The Inventory and Refund Agent builders and Workflow State helpers are present in `agent_orchestrator.py`. The Policy Agent, Communication Agent, and Orchestrator Agent builders still contain TODOs, so the intended route through these agents is not yet implemented as a working system.
 
 The agent system is not a replacement for deterministic validation. Customer identifiers, order identifiers, refund amounts, stock quantities, and policy eligibility thresholds should still use explicit validation and tests.
 
@@ -676,6 +679,7 @@ The following S3 console views verify the policy bucket prefix, the three policy
 
 ```python
 return Agent(
+    name='InventoryAgent',
     model=model,
     system_prompt=system_prompt,
     tools=[check_order_status, get_customer_tier, list_customer_orders],
@@ -802,6 +806,71 @@ Some captured responses repeated tool details in the final answer; the returned 
 
 The low temperature is intended to reduce variation for a fact-retrieval role; it does not guarantee identical outputs. `build_inventory_agent()` now assembles and returns the `Agent` with its model, prompt, and tools.
 
+### Step 9 — Refund Agent Implementation Progress
+
+**Checkpoint — 2026-11-26:** The Refund Agent builder was completed in `210d198` and `3b5b116`. It uses the configured worker model and AWS region at temperature `0.1`, and returns a named Strands `Agent` with two tools. The current system prompt is date-aware and defines this decision sequence:
+
+```python
+model = BedrockModel(
+    model_id=config.WORKER_MODEL_ID,
+    region_name=config.AWS_REGION,
+    temperature=0.1,
+)
+```
+
+```python
+system_prompt = f"""You are NovaMart's Refund Agent.
+Today's date is {date.today().isoformat()}.
+
+Decision process, always in this order:
+1. Call get_inventory_context first, passing the session_id given in the request,
+to read the verified order and customer facts.
+2. Check the order status. Only delivered orders can be returned. Orders that are
+cancelled, processing, or shipped are not eligible.
+3. Work out how many days have passed since the order date (from the facts) up to today's date.
+4. Apply the customer's return window: 30 days for Standard customers and
+60 days for Premium customers.
+5. If eligible, call initiate_refund. If not eligible, do not call it and explain
+why, stating the numbers used (for example: "ordered 45 days ago, window is 30").
+
+Never invent an order date, tier, status, or amount. If a fact is missing, say so
+instead of guessing. Always state your final decision clearly: approved or denied.
+"""
+```
+
+`get_inventory_context(session_id)` reads Workflow State and returns its `inventory_agent` field, or an empty dictionary when that field is absent. `initiate_refund(customer_id, order_id, reason)` creates a `RET-` reference, records a UTC request timestamp, and updates the Orders item with `status='return_initiated'`, the reference, reason, and request time. The update uses both order key attributes and a condition requiring the order to exist:
+
+```python
+table.update_item(
+    Key={'customer_id': customer_id, 'order_id': order_id},
+    UpdateExpression=(
+        'SET #status = :status, return_reference = :reference, '
+        'return_reason = :reason, return_requested_at = :requested_at'
+    ),
+    ConditionExpression='attribute_exists(order_id)',
+    ExpressionAttributeNames={'#status': 'status'},
+    ExpressionAttributeValues={
+        ':status': 'return_initiated',
+        ':reference': reference,
+        ':reason': reason,
+        ':requested_at': requested_at,
+    },
+)
+```
+
+If DynamoDB reports `ConditionalCheckFailedException`, the tool returns a not-found result without claiming a return was initiated; other `ClientError` exceptions are re-raised. On success it returns the reference, `return_initiated` status, and return instructions. The builder assembles the Refund Agent with `get_inventory_context` and `initiate_refund`:
+
+```python
+return Agent(
+    name='RefundAgent',
+    model=model,
+    system_prompt=system_prompt,
+    tools=[get_inventory_context, initiate_refund],
+)
+```
+
+This documents implemented source code, not a verified refund transaction. No Refund Agent CLI run or conditional-write integration result is recorded. The system prompt directs the agent to make the eligibility decision; the mutation tool itself checks that the keyed order exists, but does not independently enforce delivery status or tier/date eligibility. Add deterministic eligibility and authorization checks before relying on this mutation path in production. Policy Knowledge Base retrieval and Orchestrator routing are still unimplemented.
+
 The deployed resources are infrastructure, not a complete application. Agent code is in progress; Knowledge Bases, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
 
 ## 12. Design Decisions and Tradeoffs
@@ -816,12 +885,12 @@ These are the decisions reflected in the current infrastructure or target design
 | DynamoDB billing | `PAY_PER_REQUEST` for all three tables. | No read/write capacity planning; avoids provisioned-throughput charges when there is no request traffic, which suits a low-traffic learning project. | Storage, Streams activity, backups, and other features can still cost money. At sustained high request volume, provisioned capacity may be cheaper, so compare real usage and pricing before production. |
 | Customer table key | `customer_id` as a simple partition key. | A customer is retrieved by its unique customer identifier. | Other access patterns, such as lookup by email, would need a deliberately designed index or a different access path. |
 | Orders table key | `customer_id` partition key plus `order_id` sort key. | Supports listing one customer's orders and identifying one order using both key values. | Queries must follow this access pattern; this key does not make arbitrary order attributes searchable. |
-| Workflow state | One item per `session_id`, with TTL enabled. | Provides a shared durable record for the planned multi-agent workflow and a way to expire temporary sessions. | Application code still needs to write state and a Unix-epoch TTL value. Expiration is asynchronous; optimistic locking is planned but not implemented. |
+| Workflow state | One item per `session_id`, with a 24-hour TTL and version-based conditional updates. | Provides a shared durable record and prevents stale concurrent writes from silently overwriting newer state. | Create/read/update helpers and bounded conflict retries are implemented in source, but concurrent-write and TTL behavior have not been integration-tested. Expiration is asynchronous. |
 | Orders stream | `NEW_AND_OLD_IMAGES`. | Retains before-and-after item images for possible future event-driven processing. | A stream consumer is not implemented. Stream processing adds operational complexity and may incur additional charges. |
 | Policy storage | Regular S3 bucket for source documents; separate S3 Vectors bucket and one index per policy domain. | Keeps original documents separate from vector-search data and isolates Returns, Shipping, and Warranty retrieval. | Knowledge Bases, document ingestion/sync, and end-to-end retrieval are not yet implemented. |
 | Vector settings | `float32`, dimension `1024`, cosine distance, and `AMAZON_BEDROCK_TEXT` as non-filterable metadata. | Matches the intended embedding and retrieval configuration documented for this project. | Dimension must match the embedding model; verify actual Knowledge Base configuration and retrieval behavior when implemented. |
 | Naming | Prefix resource names with `ProjectName`; add account/stack-derived uniqueness to bucket names. | Gives resources a recognizable project identity while reducing global S3 name collisions. | AWS naming limits and uniqueness requirements still apply; generated names should be verified after deployment. |
-| Agent coordination | Central orchestrator with specialist roles; policy retrieval is designed to be parallel. | Makes routing and ownership easier to reason about while allowing independent policy searches to run concurrently. | Agent runtime and retrieval workflow are design only; parallel calls can increase simultaneous usage and cost. |
+| Agent coordination | Inventory and Refund Agent builders are implemented; the Orchestrator and Policy/Communication builders remain unfinished. Policy retrieval is designed to be parallel. | Separates factual lookup, refund decisions, policy retrieval, and response generation into specialist roles. | The end-to-end orchestrator and Knowledge Base retrieval are not implemented or deployed; the worker builders have not all been integrated or tested together. |
 | CloudWatch log retention | Dedicated log group with `RetentionInDays: 14`. | Keeps the planned AgentCore log destination explicit and limits how long log events are retained. | Retention controls stored log events, not whether logs are produced. Ingestion and retained data can incur charges; an empty log group is not proof of working runtime logging. |
 
 ## 13. Reliability and Failure Handling
@@ -1014,11 +1083,12 @@ Tests should cover implementation and infrastructure at several levels:
 - Tool input validation.
 - DynamoDB key construction.
 - TTL value calculations.
-- Refund eligibility rules.
+- Refund eligibility boundaries: order status, tier-specific return windows, elapsed days, and when the mutation tool may be called.
 
 ### Integration Tests
 
 - DynamoDB CRUD and conditional writes.
+- Refund Agent context lookup and conditional return-update behavior.
 - Bedrock Knowledge Base retrieval.
 - S3 policy document ingestion.
 - Agent-to-tool invocation.
@@ -1064,18 +1134,17 @@ The project is partially complete. The following status distinctions are importa
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
-- Python configuration and package code, including Inventory Agent model/prompt setup, three DynamoDB data tools, and Agent construction; implementation details and validation limits are recorded in section 11.
+- Python configuration and package code, including the Inventory and Refund Agent builders, their prompts/tools, and Workflow State create/read/update helpers with optimistic locking; implementation details and validation limits are recorded in sections 7 and 11.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
 
 ### Not Yet Implemented or Verified
 
-- Bedrock Knowledge Base creation and synchronization.
-- Complete orchestrator and specialist-agent implementation. Inventory Agent construction is implemented, but other agent builders and orchestration steps remain incomplete.
+- Bedrock Knowledge Base creation, synchronization, and retrieval.
+- Complete orchestrator and specialist-agent workflow. Inventory and Refund Agent builders are implemented, but Policy and Communication Agent construction and Orchestrator routing still contain TODOs.
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
-- Policy retrieval, workflow-state operations, and refund mutations. The Inventory order lookup, customer lookup, and customer order-history tools are implemented.
-- Workflow-state optimistic locking.
-- Refund decision logic.
+- Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source but are not yet verified by integration tests.
+- Refund eligibility behavior, conditional mutation handling, and Workflow State concurrency/TTL behavior have not yet been validated through focused automated or live integration tests.
 - Bedrock Guardrails.
 - Production least-privilege IAM review and any further role separation.
 - Runtime logging initialization and actual log ingestion, plus X-Ray observability.
@@ -1099,7 +1168,7 @@ A customer can have multiple orders. A partition key alone would not identify an
 
 ### Why use a Workflow State table?
 
-Agents need a shared, durable record of the session. The table provides one place for routing status and intermediate results. It should use optimistic locking to prevent stale concurrent updates.
+Agents need a shared, durable record of the session. The table provides one place for routing status and intermediate results. The source helpers use a version condition and bounded retries to prevent stale concurrent updates; the concurrency behavior still needs a focused test.
 
 ### Why use RAG?
 
