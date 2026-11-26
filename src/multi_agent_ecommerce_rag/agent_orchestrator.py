@@ -357,6 +357,7 @@ def build_inventory_agent() -> Agent:
 
     # TODO: Instantiate and return the Agent
     return Agent(
+    name='InventoryAgent',
     model=model,
     system_prompt=system_prompt,
     tools=[check_order_status, get_customer_tier, list_customer_orders],
@@ -381,7 +382,8 @@ def build_refund_agent() -> Agent:
     Today's date is {date.today().isoformat()}.
 
     Decision process, always in this order:
-    1. Call get_inventory_context first to read the verified order and customer facts.
+    1. Call get_inventory_context first, passing the session_id given in the request,
+    to read the verified order and customer facts.
     2. Check the order status. Only delivered orders can be returned. Orders that are
     cancelled, processing, or shipped are not eligible.
     3. Work out how many days have passed since the order date (from the facts) up to today's date.
@@ -406,7 +408,8 @@ def build_refund_agent() -> Agent:
         Returns:
             The inventory_agent field from WorkflowState, or empty dict if not yet set
         """
-        pass
+        state = _read_workflow_state(session_id) or {}
+        return state.get('inventory_agent', {})
 
     # TODO: Implement initiate_refund
     @tool
@@ -422,10 +425,45 @@ def build_refund_agent() -> Agent:
         Returns:
             Confirmation dict with return_reference number and instructions
         """
-        pass
+        reference = f"RET-{uuid.uuid4().hex[:10].upper()}"
+        requested_at = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+        table = dynamodb.Table(config.ORDERS_TABLE)
+        try:
+            table.update_item(
+                Key={'customer_id': customer_id, 'order_id': order_id},
+                UpdateExpression=(
+                    'SET #status = :status, return_reference = :reference, '
+                    'return_reason = :reason, return_requested_at = :requested_at'
+                ),
+                ConditionExpression='attribute_exists(order_id)',
+                ExpressionAttributeNames={'#status': 'status'},
+                ExpressionAttributeValues={
+                    ':status': 'return_initiated',
+                    ':reference': reference,
+                    ':reason': reason,
+                    ':requested_at': requested_at,
+                },
+            )
+        except ClientError as exc:
+            if exc.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
+                return {'success': False, 'message': 'Order not found; no refund was initiated.'}
+            raise
+        return {
+            'success': True,
+            'customer_id': customer_id,
+            'order_id': order_id,
+            'return_reference': reference,
+            'status': 'return_initiated',
+            'instructions': 'Use the prepaid return label and retain this reference.',
+        }
 
-    # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+        name='RefundAgent',
+        model=model,
+        system_prompt=system_prompt,
+        tools=[get_inventory_context, initiate_refund],
+    )
+
 
 
 # ───────────────────────────────────────────────────────
