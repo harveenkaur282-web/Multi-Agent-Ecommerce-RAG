@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. Inventory and Refund Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI smoke tests cover Inventory lookups; Refund Agent behavior and Workflow State concurrency are not yet verified. Policy retrieval, Communication Agent, and orchestrator routing remain incomplete. Bedrock Knowledge Bases and the AgentCore runtime are not deployed, so the end-to-end workflow is not running.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. Inventory and Refund Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI smoke tests cover Inventory lookups and Refund Agent denial/approval paths, including one successful return mutation. The refund harness injects its own order facts; it does not verify the complete Inventory-to-Refund workflow. Workflow State concurrency remains untested. Policy retrieval, Communication Agent, and orchestrator routing remain incomplete; Bedrock Knowledge Bases and the AgentCore runtime are not deployed.
 
 ## 1. Project Overview
 
@@ -77,7 +77,7 @@ The project was built incrementally. Each implementation step below has its code
 | 5 | Added CloudFormation exports and Python configuration (`6979d8c`, `152d855`, `abc646e`). | Sections 5 and 10: Outputs snippet/table and the `config.py` run screenshot. |
 | 6 | Added deterministic seed data for DynamoDB and policy documents (`ed9350f`). | Section 11: seed write snippet, terminal run, then DynamoDB/S3 verification screenshots. |
 | 7 | Added the agent package, Inventory Agent setup, three DynamoDB data tools, and Agent construction (`f92ea25`, `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, `c50db65`, `9718322`). | Section 11: model/prompt, DynamoDB tool code snapshots, and the `Agent` assembly added in `9718322`. |
-| 8 | Implemented the Refund Agent model, date-aware eligibility prompt, Workflow State context tool, and conditional DynamoDB return mutation (`210d198`, `3b5b116`). The latter commit also assigns the Inventory Agent its explicit name. | Sections 7 and 11: Workflow State helper behavior and Refund Agent prompt/tool/assembly details; no Refund Agent runtime test is documented. |
+| 8 | Implemented the Refund Agent model, date-aware eligibility prompt, Workflow State context tool, and conditional DynamoDB return mutation (`210d198`, `3b5b116`). The latter commit also assigns the Inventory Agent its explicit name. | Sections 7 and 11: Workflow State helper behavior, Refund Agent prompt/tools, `smoke_refund.py` harness, and manual smoke-test outputs. |
 
 ### Agent Responsibilities
 
@@ -101,6 +101,7 @@ Role specialization keeps each agent responsible for a distinct business functio
 | `diagrams/` | Architecture and workflow visualizations |
 | `src/multi_agent_ecommerce_rag/` | Python application and agent implementation in progress |
 | `config.py` | Environment and project settings |
+| `smoke_refund.py` | Local manual Refund Agent smoke-test harness; cases and outputs are documented in section 11 |
 | `agentcore/` | AgentCore CLI project configuration and TypeScript CDK deployment scaffold |
 | `tests/` | Configuration unit tests |
 | `pyproject.toml` | Python project metadata and dependencies |
@@ -869,7 +870,93 @@ return Agent(
 )
 ```
 
-This documents implemented source code, not a verified refund transaction. No Refund Agent CLI run or conditional-write integration result is recorded. The system prompt directs the agent to make the eligibility decision; the mutation tool itself checks that the keyed order exists, but does not independently enforce delivery status or tier/date eligibility. Add deterministic eligibility and authorization checks before relying on this mutation path in production. Policy Knowledge Base retrieval and Orchestrator routing are still unimplemented.
+The system prompt directs the agent to make the eligibility decision; the mutation tool itself checks that the keyed order exists, but does not independently enforce delivery status or tier/date eligibility. Add deterministic eligibility and authorization checks before relying on this mutation path in production. Policy Knowledge Base retrieval and Orchestrator routing are still unimplemented.
+
+#### Refund Agent Smoke Tests — 2026-11-26
+
+The local [`smoke_refund.py`](../smoke_refund.py) harness was used to exercise the Refund Agent's prompt and tools. First, a short build check instantiated both the Inventory and Refund Agents. The smoke-test script then accepts a case letter (`A`–`D`), creates a unique Workflow State session, writes case-specific inventory facts into that state, builds the Refund Agent, and asks it to decide and act:
+
+```python
+import sys, uuid
+sys.path.insert(0, 'src')
+from multi_agent_ecommerce_rag.agent_orchestrator import (
+    build_refund_agent, _create_workflow_state, _update_workflow_state,
+)
+
+CASES = {
+    "A": ("CUST-002", "ORD-28001",
+          "Order ORD-28001: Mechanical Keyboard K2, order date 2026-10-10, "
+          "status delivered, price 89.99. Customer tier: Standard."),
+    "B": ("CUST-001", "ORD-27180",
+          "Order ORD-27180: Coffee Maker Deluxe, order date 2026-08-21, "
+          "status delivered, price 79.99. Customer tier: Premium."),
+    "C": ("CUST-003", "ORD-29003",
+          "Order ORD-29003: Bluetooth Speaker, order date 2026-11-09, "
+          "status cancelled, price 49.99. Customer tier: Premium."),
+    "D": ("CUST-001", "ORD-27176",
+          "Order ORD-27176: Wireless Headphones Pro, order date 2026-11-12, "
+          "status delivered, price 149.99. Customer tier: Premium."),
+}
+
+cid, oid, facts = CASES[sys.argv[1]]
+sid = f"smoke-{uuid.uuid4().hex[:8]}"
+_create_workflow_state(sid, cid)
+_update_workflow_state(sid, {"inventory_agent": facts}, expected_version=0)
+
+agent = build_refund_agent()
+print(agent(f"session_id: {sid}. Customer {cid} wants to return order {oid} "
+            f"because they no longer need it. Decide and act."))
+```
+
+Run one scenario at a time with `python smoke_refund.py A`, `B`, `C`, or `D`. The harness injects fixed facts directly into Workflow State; it does not call the Inventory Agent to retrieve them. Cases A–C exercise denial paths and do not call `initiate_refund`. Case D calls `initiate_refund`, which performs a real update to the Orders table. The output shows:
+
+| Case | Scenario and observed result |
+|---|---|
+| A | `ORD-28001` is marked delivered, but the Standard customer's 30-day window had elapsed by 17 days (47 days since the supplied order date). The agent denied the request and did not initiate a return. |
+| B | `ORD-27180` is marked delivered, but the Premium customer's 60-day window had elapsed by 37 days (97 days since the supplied order date). The agent denied the request and did not initiate a return. |
+| C | `ORD-29003` is marked cancelled. The agent denied the request because only delivered orders are eligible, despite the supplied Premium tier. |
+| D | `ORD-27176` is marked delivered and 14 days old for a Premium customer with a 60-day window. The agent approved the request for “no longer needs it,” called `initiate_refund`, and reported reference `RET-4BE33EF712` with status `return_initiated`. |
+
+The build check and each smoke-test output are captured here:
+
+![Both Inventory and Refund Agent builders instantiated successfully](./images/refund-agent-build-smoke.png)
+
+![Refund smoke case A: Standard-tier request outside the 30-day window](./images/refund-smoke-a-standard-over-window-1.png)
+
+![Continuation of Refund smoke case A denial output](./images/refund-smoke-a-standard-over-window-2.png)
+
+![Refund smoke case B: Premium-tier request outside the 60-day window](./images/refund-smoke-b-premium-over-window-1.png)
+
+![Continuation of Refund smoke case B denial output](./images/refund-smoke-b-premium-over-window-2.png)
+
+![Final portion of Refund smoke case B denial output](./images/refund-smoke-b-premium-over-window-3.png)
+
+![Refund smoke case C: cancelled order denied](./images/refund-smoke-c-cancelled-order-1.png)
+
+![Final denial response for cancelled order ORD-29003](./images/refund-smoke-c-cancelled-order-2.png)
+
+![Refund smoke case D: eligible Premium-tier order approved](./images/refund-smoke-d-approved-return-1.png)
+
+![Refund smoke case D: initiate_refund succeeded and returned a reference](./images/refund-smoke-d-approved-return-2.png)
+
+The seed-data run below shows four customers, eleven orders, and six policy documents uploaded. It is separate from the injected smoke-test facts:
+
+![Seed-data script output showing customer/order records and policy uploads](./images/refund-smoke-seed-data-output.png)
+
+**Test boundary and data caveat:** the screenshot's latest seed run gives some orders dates two days later than the hard-coded smoke fixtures (for example, `ORD-27176` is November 14 in the seed output but November 12 in case D). The denial/approval calculations above therefore demonstrate the agent's behavior on the supplied Workflow State facts, not a fresh Inventory lookup against the current seeded records. Case D did mutate the existing DynamoDB order; rerunning it can replace its return reference and return fields.
+
+After case D, the Orders table was reseeded. These AWS CLI scans were then used to check that no seeded order retained a `return_reference` and that the expected 11 orders were present:
+
+```powershell
+aws dynamodb scan --table-name udacity-agentcore-orders --filter-expression "attribute_exists(return_reference)" --select COUNT --region us-east-1
+aws dynamodb scan --table-name udacity-agentcore-orders --select COUNT --region us-east-1
+```
+
+The filtered scan returned `Count: 0` with `ScannedCount: 11`; the full scan returned `Count: 11` with `ScannedCount: 11`. This confirms the return-reference attribute was absent from the scanned orders and the table contained 11 items after reseeding. It is not a row-by-row comparison of every seeded field.
+
+![AWS CLI verification after reseeding: zero orders have return_reference and the table contains 11 orders](./images/refund-smoke-reseed-verification.png)
+
+These manual checks do not replace automated boundary tests or a complete orchestrated workflow test.
 
 The deployed resources are infrastructure, not a complete application. Agent code is in progress; Knowledge Bases, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
 
@@ -1143,8 +1230,8 @@ The project is partially complete. The following status distinctions are importa
 - Bedrock Knowledge Base creation, synchronization, and retrieval.
 - Complete orchestrator and specialist-agent workflow. Inventory and Refund Agent builders are implemented, but Policy and Communication Agent construction and Orchestrator routing still contain TODOs.
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
-- Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source but are not yet verified by integration tests.
-- Refund eligibility behavior, conditional mutation handling, and Workflow State concurrency/TTL behavior have not yet been validated through focused automated or live integration tests.
+- Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source; smoke case D shows one successful update, but automated conditional-write and failure-path tests are still outstanding.
+- Refund smoke cases exercise prompt-level denial and approval with injected Workflow State facts. Focused automated tests, refreshed fixture data, and an end-to-end Inventory-to-Refund workflow test are still outstanding. Workflow State concurrency/TTL behavior also remains untested.
 - Bedrock Guardrails.
 - Production least-privilege IAM review and any further role separation.
 - Runtime logging initialization and actual log ingestion, plus X-Ray observability.

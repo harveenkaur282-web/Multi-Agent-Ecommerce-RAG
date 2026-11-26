@@ -396,7 +396,6 @@ def build_refund_agent() -> Agent:
     instead of guessing. Always state your final decision clearly: approved or denied.
     """
 
-    # TODO: Implement get_inventory_context
     @tool
     def get_inventory_context(session_id: str) -> dict:
         """
@@ -411,7 +410,7 @@ def build_refund_agent() -> Agent:
         state = _read_workflow_state(session_id) or {}
         return state.get('inventory_agent', {})
 
-    # TODO: Implement initiate_refund
+
     @tool
     def initiate_refund(customer_id: str, order_id: str, reason: str) -> dict:
         """
