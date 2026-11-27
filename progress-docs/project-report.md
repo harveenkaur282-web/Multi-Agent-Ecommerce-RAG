@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Returns index details confirm a 1024 dimension and cosine distance metric. The policy bucket's versioning and encryption settings have not yet been verified in the console. Inventory and Refund Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI smoke tests cover Inventory lookups and Refund Agent denial/approval paths, including one successful return mutation. The refund harness injects its own order facts; it does not verify the complete Inventory-to-Refund workflow. Workflow State concurrency remains untested. Policy retrieval, Communication Agent, and orchestrator routing remain incomplete; Bedrock Knowledge Bases and the AgentCore runtime are not deployed.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation or end-to-end agent test. Inventory and Refund Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI smoke tests cover Inventory lookups and Refund Agent denial/approval paths, including one successful return mutation. Policy Agent integration, Communication Agent, and orchestrator routing remain incomplete, and the AgentCore runtime is not deployed.
 
 ## 1. Project Overview
 
@@ -78,6 +78,7 @@ The project was built incrementally. Each implementation step below has its code
 | 6 | Added deterministic seed data for DynamoDB and policy documents (`ed9350f`). | Section 11: seed write snippet, terminal run, then DynamoDB/S3 verification screenshots. |
 | 7 | Added the agent package, Inventory Agent setup, three DynamoDB data tools, and Agent construction (`f92ea25`, `a7b5a63`, `9ff912f`, `2d41a94`, `aafda28`, `c50db65`, `9718322`). | Section 11: model/prompt, DynamoDB tool code snapshots, and the `Agent` assembly added in `9718322`. |
 | 8 | Implemented the Refund Agent model, date-aware eligibility prompt, Workflow State context tool, and conditional DynamoDB return mutation (`210d198`, `3b5b116`). The latter commit also assigns the Inventory Agent its explicit name. | Sections 7 and 11: Workflow State helper behavior, Refund Agent prompt/tools, `smoke_refund.py` harness, and manual smoke-test outputs. |
+| 9 | Configured policy Knowledge Bases in the Bedrock console and ran one direct retrieval probe per domain. The overview lists all three as `Available`; the probes returned 3 Returns, 2 Shipping, and 2 Warranty results. | Section 9: console setup/status screenshots and manual retrieval smoke-test commands and outputs. |
 
 ### Agent Responsibilities
 
@@ -529,6 +530,89 @@ The Inventory and Refund Agent builders and Workflow State helpers are present i
 
 The agent system is not a replacement for deterministic validation. Customer identifiers, order identifiers, refund amounts, stock quantities, and policy eligibility thresholds should still use explicit validation and tests.
 
+### Step 9 — Creating Knowledge Bases in the Bedrock Console
+
+**Checkpoint — 2026-11-28:** Knowledge Base setup was performed manually in the Amazon Bedrock AgentCore console rather than through the repository's CloudFormation template. The screenshots record three domain-specific flows and a later overview:
+
+1. **Returns:** Created `returns-kb` with an Amazon S3 data source for the Returns policy prefix. The source used the default parser and default chunking. The Knowledge Base used Titan Text Embeddings v2 with 1024-dimensional float embeddings and the existing S3 Vectors `returns-policy-index`.
+2. **Returns sync and availability:** The console first showed the data source syncing, then reported sync completion. The Returns Knowledge Base overview showed status `Available` and its data source status `Available`. Its observability panel showed zero invocations at capture time; the separate direct retrieval smoke test below is later evidence and does not demonstrate an end-user agent call.
+3. **Shipping:** The console wizard was configured for `shipping-kb`, its S3 shipping-policy source, and the existing `shipping-policy-index`. A screenshot shows sync completed and `shipping-data-source` status `Available`; the all-KB overview also lists the Shipping Knowledge Base as `Available`.
+4. **Warranty:** The wizard screenshot shows `warranty-policy-index` selected during vector-store configuration. A later all-KB overview lists `warranty-kb` as `Available` with one data source and zero last-sync warnings. Its `Last sync date` is shown as `-`; a separate direct retrieval probe below returns Warranty policy text, confirming that relevant content is retrievable despite the missing date.
+
+The wizard screenshot copies below obscure S3 bucket names/URIs, AWS account identifiers, vector-store ARNs, Knowledge Base IDs, and generated service-role names. The overview screenshot at the end of this section contains only KB names, statuses, data-source counts, and sync-warning counts.
+
+#### Returns Knowledge Base
+
+The creation wizard names the Knowledge Base `returns-kb` and configures an S3 source. The source configuration uses the Returns policy prefix and Amazon Bedrock's default parser:
+
+![Returns Knowledge Base details and S3 source selection](./images/bedrock-kb-returns-create.png)
+
+![Returns data-source setup with the S3 URI redacted](./images/bedrock-kb-returns-data-source.png)
+
+![Default parser and chunking options for the Returns source](./images/bedrock-kb-returns-parser-chunking.png)
+
+The storage step selects Titan Text Embeddings v2 and the existing S3 Vectors store. The vector bucket ARN and index ARN are redacted; the index selection is documented as the Returns index:
+
+![Returns Knowledge Base embedding model and vector-store type](./images/bedrock-kb-returns-embedding-vector-setup.png)
+
+![Returns Knowledge Base connected to the existing vector index; identifiers redacted](./images/bedrock-kb-returns-vector-index-selection.png)
+
+The console shows the source entering sync and then completing. The Knowledge Base overview shows the KB and data source available:
+
+![Returns data source synchronization in progress](./images/bedrock-kb-returns-syncing.png)
+
+![Returns Knowledge Base overview after sync, with Available status](./images/bedrock-kb-returns-available.png)
+
+![Returns Knowledge Base embedding dimensions and vector-store configuration; ARN redacted](./images/bedrock-kb-returns-configuration-details.png)
+
+![Returns data source listed as Available](./images/bedrock-kb-returns-data-source-available.png)
+
+![Knowledge Base console list showing returns-kb as Available](./images/bedrock-kb-console-list.png)
+
+The captured Returns observability panel reported zero invocations and a zero-percent invocation error rate at that time. The separate CLI probes below provide direct retrieval evidence; neither capture assesses retrieval quality or end-user agent behavior.
+
+#### Shipping Knowledge Base
+
+The Shipping wizard names `shipping-kb`, selects an S3 data source for Shipping policy documents, and connects to the existing Shipping vector index. Resource identifiers are redacted:
+
+![Shipping Knowledge Base details and generated service role; role name redacted](./images/bedrock-kb-shipping-create.png)
+
+![Shipping S3 data-source configuration with bucket URI redacted](./images/bedrock-kb-shipping-data-source.png)
+
+![Shipping Knowledge Base configured to use its existing vector index; ARNs redacted](./images/bedrock-kb-shipping-vector-index-selection.png)
+
+The review screen shows the Shipping Knowledge Base create workflow and service-role creation in progress. A later source-details screen reports sync completion and an `Available` status for `shipping-data-source`:
+
+![Shipping Knowledge Base review screen while role creation is in progress](./images/bedrock-kb-shipping-review-create.png)
+
+![Shipping data-source sync completed and source status Available](./images/bedrock-kb-shipping-data-source-available.png)
+
+The source-details screenshot does not show invocation metrics. The later all-KB overview confirms the Shipping Knowledge Base status is `Available`, and the direct retrieval probe below returns Shipping policy text; neither demonstrates agent integration or retrieval quality.
+
+#### Warranty Knowledge Base Setup
+
+The provided Warranty wizard screenshot reaches the vector-store selection stage and selects the Warranty policy index:
+
+![Warranty Knowledge Base wizard at vector-index selection; identifiers redacted](./images/bedrock-kb-warranty-vector-index-selection.png)
+
+The later console overview confirms that `warranty-kb` exists and is `Available`, with one data source and zero last-sync warnings. Its `Last sync date` is `-`; the manual retrieval check below provides separate evidence that Warranty policy content is retrievable:
+
+![Bedrock Knowledge Bases overview listing Returns, Shipping, and Warranty as Available](./images/bedrock-kb-overview-all-available.png)
+
+#### Manual Retrieval Smoke Tests
+
+The following one-off Python CLI probes used `boto3`'s Bedrock Agent Runtime `retrieve()` operation, the corresponding `config.*_KB_ID`, and one query per domain. The command printed the result count and the first 100 characters of each retrieved text:
+
+| Knowledge Base | Sample query | Retrieved results | Output evidence |
+|---|---|---:|---|
+| Returns | `return window for premium customers` | 3 | Excerpts included the NovaMart Return Policy and Customer Tier Program. |
+| Shipping | `how long does standard shipping take?` | 2 | Excerpts included the NovaMart Shipping Policy and Customer Tier Program. |
+| Warranty | `what does the warranty cover?` | 2 | Excerpts included the NovaMart Warranty Policy and Customer Tier Program. |
+
+![Manual direct retrieval smoke tests for Returns, Shipping, and Warranty Knowledge Bases](./images/bedrock-kb-retrieval-smoke-tests.png)
+
+These results verify that each KB returned text for its sample query, including Warranty content despite the overview's `-` last-sync date. The probes are narrow smoke tests: they do not assess ranking or relevance across varied queries, validate complete policy coverage, generate final answers, or exercise the application agents/orchestrator.
+
 ## 10. Step 6 — Python Configuration
 
 `config.py` centralizes runtime configuration. It combines local environment settings with values exported by the CloudFormation stack, so code can resolve deployed resource names instead of hard-coding account-specific identifiers.
@@ -538,13 +622,22 @@ The agent system is not a replacement for deterministic validation. Customer ide
 | Code element | What it does |
 |---|---|
 | `import os` | Reads process environment variables such as `AWS_REGION` and `PROJECT_NAME`. |
-| `from dotenv import load_dotenv` | Imports the helper that can load values from a `.env` file. In the current file, it is imported but never called. |
+| `from dotenv import load_dotenv` | Imports the helper used to load local values from the repository's `.env` file. |
+| `load_dotenv()` | Loads `.env` values into `os.environ` before the configuration module reads its environment settings. Existing process environment values are not overwritten by default. |
 | `AWS_REGION` | Reads `AWS_REGION`; defaults to `us-east-1`. Selects the AWS Region for boto3 clients. |
 | `PROJECT_NAME` | Reads `PROJECT_NAME`; defaults to `udacity-agentcore`. Also forms the prefix used to find the stack's exports. |
 | `ORCHESTRATOR_MODEL_ID` | Configures the intended faster/less costly routing model. This is a model identifier constant; it does not itself call the model. |
 | `WORKER_MODEL_ID` | Configures the intended worker model for more involved reasoning and response generation. It does not itself start an agent. |
 
-These are environment fallbacks rather than `.env` loading: because `load_dotenv()` is not called, values in a local `.env` file will not become available through this module unless another entry point loads them first. Shell or process environment variables do work.
+The loader is called near the top of `config.py`, before values such as `AWS_REGION` and the lazy Knowledge Base ID lookups are evaluated:
+
+```python
+from dotenv import load_dotenv
+
+load_dotenv()
+```
+
+This fixes a configuration issue where `load_dotenv` was imported but never called. The KB lookup helper reads `os.environ` first, so IDs present only in `.env` were previously unavailable to it. After adding the call, a runtime check confirmed all three KB ID variables were loaded and the corresponding `config.RETURNS_KB_ID`, `config.SHIPPING_KB_ID`, and `config.WARRANTY_KB_ID` values resolved. The ID values are intentionally not reproduced in this report.
 
 ### CloudFormation Export Loading
 
@@ -563,7 +656,7 @@ These are environment fallbacks rather than `.env` loading: because `load_dotenv
 | `_get(key, fallback_env=None)` | Looks up the export named `{PROJECT_NAME}-{key}`; optionally checks the named environment variable if the export value is missing; otherwise raises `ConfigError`. | Required resource names and ARNs. |
 | `_get_env(key, required=True)` | Reads an environment variable and raises `ConfigError` if it is required but empty. | Available for settings that are not in CloudFormation; it is not currently called elsewhere in this file. |
 | `_account_id()` | Calls STS `GetCallerIdentity` in `AWS_REGION` and returns the account ID. | Supplies the account identifier shown by `print_config()`. |
-| `_get_kb_id(cf_key, env_key)` | Checks the environment variable first, then the matching CloudFormation export. If export loading raises `ConfigError`, returns an empty string. | Optional Returns, Shipping, and Warranty Knowledge Base IDs, which have not yet been created/exported. |
+| `_get_kb_id(cf_key, env_key)` | Checks the environment variable first, then the matching CloudFormation export. If export loading raises `ConfigError`, returns an empty string. | Optional Returns, Shipping, and Warranty Knowledge Base IDs. The console-created KB IDs are not exported by the current CloudFormation template and must be configured separately when needed. |
 | `_get_optional_export(cf_key, env_key, default='')` | Checks the environment variable first, then CloudFormation, then returns the default. It returns the default if export loading raises `ConfigError`. | Optional Guardrail ID and version. |
 
 ### Lazy Configuration Values
@@ -579,7 +672,7 @@ These are environment fallbacks rather than `.env` loading: because `load_dotenv
 | `RETURNS_VECTOR_INDEX`, `SHIPPING_VECTOR_INDEX`, `WARRANTY_VECTOR_INDEX` | The three vector-index exports | Select the index for the corresponding policy domain. |
 | `AGENTCORE_ROLE_ARN` | `AgentCoreRoleArn` export | Identify the execution role. |
 | `AGENT_LOG_GROUP` | `AgentLogGroup` export | Identify the CloudWatch log group. |
-| `RETURNS_KB_ID`, `SHIPPING_KB_ID`, `WARRANTY_KB_ID` | Environment variable first, then `{PROJECT_NAME}-ReturnsKbId`, `...-ShippingKbId`, or `...-WarrantyKbId` export | Optional IDs for the Knowledge Bases, not yet available in the current template. |
+| `RETURNS_KB_ID`, `SHIPPING_KB_ID`, `WARRANTY_KB_ID` | Environment variable first, then `{PROJECT_NAME}-ReturnsKbId`, `...-ShippingKbId`, or `...-WarrantyKbId` export | Optional IDs for manually created Knowledge Bases. The current CloudFormation template does not export these IDs; configure them separately for application use. |
 | `GUARDRAIL_ID`, `GUARDRAIL_VERSION` | Environment variable first, then optional corresponding export | Optional guardrail settings, not yet created/exported. |
 
 When a lazy lookup succeeds, `__getattr__` stores stable resource values in the module's globals so subsequent access does not repeat the lookup. Knowledge Base and Guardrail values are deliberately not cached, allowing those optional values to reflect later environment changes during the process. Unknown names raise `AttributeError`, as expected for a Python module.
@@ -607,11 +700,15 @@ When a lazy lookup succeeds, `__getattr__` stores stable resource values in the 
 | `print_config()` | Prints region, account, model identifiers, resource names, optional Knowledge Base/Guardrail values, and runtime details. |
 | `if __name__ == '__main__':` | Calls `print_config()` only when running `python config.py`; importing `config` does not print the report. |
 
-The terminal capture below shows the diagnostic run: AWS identity and CloudFormation exports resolve, while Knowledge Base IDs, runtime ARN, and Guardrail settings display their expected not-yet-configured placeholders. The derived runtime name is printed even though the runtime itself is not deployed.
+The terminal capture below predates the console Knowledge Base setup documented in section 9. At that time, AWS identity and CloudFormation exports resolved, while Knowledge Base IDs, runtime ARN, and Guardrail settings displayed not-yet-configured placeholders. The derived runtime name is printed even though the runtime itself is not deployed.
 
 The configuration loader grew in two commits: `152d855` added region/project/model settings and initial export loading; `abc646e` added cached CloudFormation export resolution and optional Knowledge Base/Guardrail fallbacks.
 
 ![config.py output with resolved AWS resources and pending values](./images/config-py-console-output.png)
+
+After adding `load_dotenv()`, `python config.py` was run again. The updated output shows values for all three Knowledge Base IDs, confirming that the configuration now reads them from `.env`. This verifies configuration loading only; it does not validate the IDs against Bedrock or demonstrate retrieval. The account ID, account-specific bucket names, execution-role ARN, Knowledge Base IDs, and local terminal paths are redacted in the report copy.
+
+![config.py output after loading the local environment file](./images/config-env-ids-loaded.png)
 
 ### Current Boundaries and Follow-Up
 
@@ -619,9 +716,9 @@ The configuration loader grew in two commits: `152d855` added region/project/mod
 |---|---|
 | Table names, bucket names, index names, role ARN, and log-group name print successfully. | It does not mean Python agents are implemented or using those resources. |
 | `ACCOUNT_ID` resolves from STS. | The account ID is not a CloudFormation output; it comes from the credentials active in the environment. |
-| Knowledge Base IDs show `(not yet created)`. | The current CloudFormation template exports bucket/index names, not Knowledge Base IDs. |
+| The earlier config diagnostic shows Knowledge Base IDs as `(not yet created)`. | That capture predates the console setup in section 9. The current CloudFormation template exports bucket/index names, not Knowledge Base IDs, so manually created IDs still need to be configured separately for application use. |
 | `AGENT_LOG_GROUP` resolves from the `AgentLogGroup` export. | The application does not yet write logs there merely because the name resolves. |
-| `load_dotenv` is imported. | The module does not load `.env` by itself because `load_dotenv()` is not called. |
+| `config.py` calls `load_dotenv()` before reading settings. | This makes local `.env` values available to the configuration code; it does not validate the KB IDs against Bedrock or prove retrieval is working. |
 
 The printed values are a useful smoke check for AWS credentials, region selection, stack exports, and missing optional configuration. Keep real credentials out of the report and repository.
 
@@ -663,6 +760,16 @@ The script output reports four customer records and eleven orders. The DynamoDB 
 ![DynamoDB scan showing the eleven seeded order items](./images/dynamodb-seeded-orders.png)
 
 The following S3 console views verify the policy bucket prefix, the three policy-domain folders, and the two expected objects in each folder.
+
+To verify the uploaded objects independently from the AWS Console, the policy bucket was listed recursively with the AWS CLI:
+
+```powershell
+aws s3 ls s3://udacity-agentcore-policy-docs-052761524137-a7483bb0/policies/ --recursive
+```
+
+The command returned six objects: two return-policy files under `policies/returns/`, two shipping-policy files under `policies/shipping/`, and two warranty-policy files under `policies/warranty/`.
+
+![AWS CLI recursive listing confirming policy documents in the S3 bucket](./images/policy-documents-s3-cli-verification.png)
 
 ![S3 policy-documents bucket showing the policies prefix](./images/s3-policy-prefix.png)
 
@@ -870,7 +977,7 @@ return Agent(
 )
 ```
 
-The system prompt directs the agent to make the eligibility decision; the mutation tool itself checks that the keyed order exists, but does not independently enforce delivery status or tier/date eligibility. Add deterministic eligibility and authorization checks before relying on this mutation path in production. Policy Knowledge Base retrieval and Orchestrator routing are still unimplemented.
+The system prompt directs the agent to make the eligibility decision; the mutation tool itself checks that the keyed order exists, but does not independently enforce delivery status or tier/date eligibility. Add deterministic eligibility and authorization checks before relying on this mutation path in production. Policy Agent integration of Knowledge Base retrieval and Orchestrator routing are still unimplemented.
 
 #### Refund Agent Smoke Tests — 2026-11-26
 
@@ -958,7 +1065,7 @@ The filtered scan returned `Count: 0` with `ScannedCount: 11`; the full scan ret
 
 These manual checks do not replace automated boundary tests or a complete orchestrated workflow test.
 
-The deployed resources are infrastructure, not a complete application. Agent code is in progress; Knowledge Bases, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
+The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; broad relevance evaluation and integration with the application agents/orchestrator remain unverified. Agent code is in progress; Policy Agent integration, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -974,10 +1081,10 @@ These are the decisions reflected in the current infrastructure or target design
 | Orders table key | `customer_id` partition key plus `order_id` sort key. | Supports listing one customer's orders and identifying one order using both key values. | Queries must follow this access pattern; this key does not make arbitrary order attributes searchable. |
 | Workflow state | One item per `session_id`, with a 24-hour TTL and version-based conditional updates. | Provides a shared durable record and prevents stale concurrent writes from silently overwriting newer state. | Create/read/update helpers and bounded conflict retries are implemented in source, but concurrent-write and TTL behavior have not been integration-tested. Expiration is asynchronous. |
 | Orders stream | `NEW_AND_OLD_IMAGES`. | Retains before-and-after item images for possible future event-driven processing. | A stream consumer is not implemented. Stream processing adds operational complexity and may incur additional charges. |
-| Policy storage | Regular S3 bucket for source documents; separate S3 Vectors bucket and one index per policy domain. | Keeps original documents separate from vector-search data and isolates Returns, Shipping, and Warranty retrieval. | Knowledge Bases, document ingestion/sync, and end-to-end retrieval are not yet implemented. |
-| Vector settings | `float32`, dimension `1024`, cosine distance, and `AMAZON_BEDROCK_TEXT` as non-filterable metadata. | Matches the intended embedding and retrieval configuration documented for this project. | Dimension must match the embedding model; verify actual Knowledge Base configuration and retrieval behavior when implemented. |
+| Policy storage | Regular S3 bucket for source documents; separate S3 Vectors bucket and one index per policy domain. All three KBs appear `Available`; direct retrieval probes return policy text for all three. | Keeps original documents separate from vector-search data and isolates policy domains. | Only one query per KB has been tried; ranking, coverage, and retrieval quality are not evaluated, and retrieval is not yet integrated into the Policy Agent workflow. |
+| Vector settings | `float32`, dimension `1024`, cosine distance, and `AMAZON_BEDROCK_TEXT` as non-filterable metadata. | Matches the intended embedding and retrieval configuration documented for this project. | Dimension must match the embedding model; evaluate retrieval quality with additional queries and verify configuration details as coverage expands. |
 | Naming | Prefix resource names with `ProjectName`; add account/stack-derived uniqueness to bucket names. | Gives resources a recognizable project identity while reducing global S3 name collisions. | AWS naming limits and uniqueness requirements still apply; generated names should be verified after deployment. |
-| Agent coordination | Inventory and Refund Agent builders are implemented; the Orchestrator and Policy/Communication builders remain unfinished. Policy retrieval is designed to be parallel. | Separates factual lookup, refund decisions, policy retrieval, and response generation into specialist roles. | The end-to-end orchestrator and Knowledge Base retrieval are not implemented or deployed; the worker builders have not all been integrated or tested together. |
+| Agent coordination | Inventory and Refund Agent builders are implemented; the Orchestrator and Policy/Communication builders remain unfinished. Policy retrieval is designed to be parallel. | Separates factual lookup, refund decisions, policy retrieval, and response generation into specialist roles. | Direct KB retrieval has only been smoke-tested outside the agents; the end-to-end orchestrator and worker integration are not implemented or tested. |
 | CloudWatch log retention | Dedicated log group with `RetentionInDays: 14`. | Keeps the planned AgentCore log destination explicit and limits how long log events are retained. | Retention controls stored log events, not whether logs are produced. Ingestion and retained data can incur charges; an empty log group is not proof of working runtime logging. |
 
 ## 13. Reliability and Failure Handling
@@ -1214,6 +1321,10 @@ The project is partially complete. The following status distinctions are importa
 - Policy-documents S3 bucket contains the seeded policy files shown directly in section 11; versioning and encryption settings still need separate console verification.
 - S3 Vectors bucket and Returns, Shipping, and Warranty indexes are visible in the AWS Console.
 - Returns vector index overview shows dimension `1024` and cosine distance metric.
+- The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings.
+- Direct `retrieve()` smoke tests returned 3 Returns, 2 Shipping, and 2 Warranty results with excerpts from the corresponding policy content. This demonstrates basic retrieval for one sample query per KB, not retrieval quality or complete document coverage.
+- The overview's `Last sync date` is `-` for each KB. Separate screenshots show completed source sync for Returns and Shipping; Warranty has no explicit sync-completion screenshot, though its policy content was returned by the direct retrieval probe.
+- The Returns observability panel showed zero invocations at capture time; the later CLI probes are separate from an end-user agent call.
 - `udacity-agentcore-agentcore-role` is visible in IAM with the `AgentCoreProjectPolicy` inline policy name and Bedrock / Bedrock AgentCore trusted-service principals.
 - CloudWatch log group `/aws/bedrock/agentcore/udacity-agentcore` is visible with a two-week retention setting; log-event ingestion by an application runtime is not yet verified.
 
@@ -1221,13 +1332,14 @@ The project is partially complete. The following status distinctions are importa
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
-- Python configuration and package code, including the Inventory and Refund Agent builders, their prompts/tools, and Workflow State create/read/update helpers with optimistic locking; implementation details and validation limits are recorded in sections 7 and 11.
+- Bedrock console configuration and status evidence for the Returns, Shipping, and Warranty Knowledge Bases is documented in section 9; these resources are not defined by the current CloudFormation template.
+- Python configuration and package code, including `.env` loading for manually configured KB IDs, the Inventory and Refund Agent builders, their prompts/tools, and Workflow State create/read/update helpers with optimistic locking; implementation details and validation limits are recorded in sections 7, 10, and 11.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
 
 ### Not Yet Implemented or Verified
 
-- Bedrock Knowledge Base creation, synchronization, and retrieval.
+- Broad retrieval relevance/coverage testing and end-to-end agent-to-KB integration. The current evidence is one direct query per KB, returning 3 Returns, 2 Shipping, and 2 Warranty results; Warranty content is retrievable, but no explicit sync-completion screenshot is available.
 - Complete orchestrator and specialist-agent workflow. Inventory and Refund Agent builders are implemented, but Policy and Communication Agent construction and Orchestrator routing still contain TODOs.
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
 - Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source; smoke case D shows one successful update, but automated conditional-write and failure-path tests are still outstanding.

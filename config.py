@@ -5,6 +5,8 @@
 import os
 from dotenv import load_dotenv
 
+load_dotenv()
+
 # REGION & PROJECT SETTINGS
 AWS_REGION   = os.environ.get('AWS_REGION', 'us-east-1')
 PROJECT_NAME = os.environ.get('PROJECT_NAME', 'udacity-agentcore')
