@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation or end-to-end agent test. Inventory and Refund Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI smoke tests cover Inventory lookups and Refund Agent denial/approval paths, including one successful return mutation. Policy Agent integration, Communication Agent, and orchestrator routing remain incomplete, and the AgentCore runtime is not deployed.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation. Inventory, Refund, and Policy Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI checks cover Inventory lookups, Refund Agent denial/approval paths, and one Policy Agent query across all three knowledge bases. The Policy Agent trace reported all three retrievers responding in 11.8 seconds; the captured output also has interleaved fragments and a duplicated final response, so output quality and broader behavior need follow-up. Communication Agent construction, orchestrator routing, the complete end-to-end workflow, and AgentCore runtime deployment remain incomplete.
 
 ## 1. Project Overview
 
@@ -524,9 +524,9 @@ RAG is useful because a foundation model should answer policy questions from pro
 6. Compose a grounded customer response.
 7. Store final state and relevant trace metadata.
 
-The Policy Agent is planned to issue parallel requests to the Returns, Shipping, and Warranty knowledge bases. Parallelism reduces end-to-end latency when all policy domains might be relevant; the retriever and Policy Agent builders remain TODOs.
+The Policy Agent builder now issues parallel requests to the Returns, Shipping, and Warranty knowledge bases. Parallel fan-out can reduce wait time when multiple domains may be relevant; the builder and one combined-query smoke test are documented in Step 10. Broader retrieval-quality testing remains outstanding.
 
-The Inventory and Refund Agent builders and Workflow State helpers are present in `agent_orchestrator.py`. The Policy Agent, Communication Agent, and Orchestrator Agent builders still contain TODOs, so the intended route through these agents is not yet implemented as a working system.
+The Inventory, Refund, and Policy Agent builders and Workflow State helpers are present in `agent_orchestrator.py`. The Communication Agent and Orchestrator Agent builders still contain TODOs, so the complete route through these agents is not yet implemented as a working system.
 
 The agent system is not a replacement for deterministic validation. Customer identifiers, order identifiers, refund amounts, stock quantities, and policy eligibility thresholds should still use explicit validation and tests.
 
@@ -977,7 +977,7 @@ return Agent(
 )
 ```
 
-The system prompt directs the agent to make the eligibility decision; the mutation tool itself checks that the keyed order exists, but does not independently enforce delivery status or tier/date eligibility. Add deterministic eligibility and authorization checks before relying on this mutation path in production. Policy Agent integration of Knowledge Base retrieval and Orchestrator routing are still unimplemented.
+The system prompt directs the agent to make the eligibility decision; the mutation tool itself checks that the keyed order exists, but does not independently enforce delivery status or tier/date eligibility. Add deterministic eligibility and authorization checks before relying on this mutation path in production. The Policy Agent's Knowledge Base retrieval builder is now implemented and manually exercised (see Step 10); Orchestrator routing remains unimplemented.
 
 #### Refund Agent Smoke Tests — 2026-11-26
 
@@ -1065,7 +1065,80 @@ The filtered scan returned `Count: 0` with `ScannedCount: 11`; the full scan ret
 
 These manual checks do not replace automated boundary tests or a complete orchestrated workflow test.
 
-The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; broad relevance evaluation and integration with the application agents/orchestrator remain unverified. Agent code is in progress; Policy Agent integration, AgentCore runtime deployment, active log emission, and end-to-end RAG are not yet implemented.
+### Step 10 — Policy Agent: Three Retrievers and Parallel Retrieval
+
+`build_policy_agent()` in [`agent_orchestrator.py`](../src/multi_agent_ecommerce_rag/agent_orchestrator.py) assembles three domain-specific retriever agents: Returns, Shipping, and Warranty. Each agent has its own retrieval tool, configured Knowledge Base ID, worker model, and system prompt that instructs it to use retrieved evidence and not invent policy details. The representative Returns tool below checks configuration and retrieval errors, requests up to three passages, and formats the evidence; the Shipping and Warranty tools follow the same pattern with their respective KB settings.
+
+```python
+@tool
+def retrieve_returns_policy(query: str) -> str:
+    if not config.RETURNS_KB_ID:
+        return "Returns Knowledge Base is not configured."
+
+    results = retrieve_from_knowledge_base(
+        kb_id=config.RETURNS_KB_ID,
+        query=query,
+        top_k=3,
+    )
+    if any(r.get("source") == "error" for r in results):
+        return "Returns policy retrieval failed: " + str(results)
+
+    return format_kb_results(results)
+```
+
+`search_all_policies` maps each policy domain to its retriever and submits all three calls to a thread pool. The coordinator's system prompt asks it to call this tool once, answer only from the returned passages, identify the policy source, and clearly say when the retrieved evidence does not answer the question.
+
+> **Important — the Policy Agent's thread pool (parallel fan-out / fan-in):** `max_workers=3` allows the three I/O-bound retriever-agent calls to run concurrently, with one worker available per policy domain. Each submitted task is stored as a `Future`, mapped back to its domain. `as_completed()` lets the main thread collect whichever result finishes next rather than waiting for the slowest domain before processing any result. The coordinator still waits for all three tasks before it can synthesize its final answer; it does not return a partial answer as each KB finishes. The executor context manages the worker lifetime and waits for submitted tasks before exiting. Because completion order can vary, the code later prints and combines results in the fixed Returns → Shipping → Warranty order. This design provides concurrent retrieval, not a guarantee of higher-quality or identical answers.
+
+```python
+with ThreadPoolExecutor(max_workers=3) as executor:
+    futures = {
+        executor.submit(_run_retriever, domain, agent, query): domain
+        for domain, agent in retrievers.items()
+    }
+
+    for future in as_completed(futures):
+        domain = futures[future]
+        try:
+            result_domain, result_text = future.result()
+            results[result_domain] = result_text
+        except Exception as exc:
+            logger.exception(
+                "Parallel retrieval failed for %s",
+                domain,
+            )
+            results[domain] = f"Retrieval failed for {domain}: {exc}"
+```
+
+The `_run_retriever` helper also catches and logs exceptions raised while an agent runs, returning a domain-specific failure string. The guard around `future.result()` covers unexpected task failures. After collection, `trace.kb_result()` and the combined policy text iterate through the explicit domain tuple, so the displayed and returned sections use a stable order even though the futures finish in any order.
+
+The manual CLI smoke test used this query:
+
+```powershell
+python -c "import sys; sys.path.insert(0,'src'); from multi_agent_ecommerce_rag.agent_orchestrator import build_policy_agent; a=build_policy_agent(); print(a('What is the return window for Premium customers, and how long does standard shipping take?'))"
+```
+
+The trace showed all three retrievers were dispatched and reported all three KBs responding in **11.8 seconds**. The sub-agent outputs were not equally useful for every part of the question: Returns found the 60-day Premium return window (30 days for Standard) but not the standard delivery time; Shipping found **5–7 business days**, free shipping on orders over $50 and otherwise $4.99, plus **2–3 business days** for Premium expedited shipping; Warranty did not supply the standard-shipping timeframe. The coordinator's final answer included the 60-day return window and the Shipping KB's 5–7-day timeframe and cost.
+
+**Observed limitations:** this is one manually run query, not an evaluation suite. The captured terminal output contains interleaved partial text before the `[PARALLEL RETRIEVAL - END]` trace, and the final coordinator answer appears twice in the screenshots. The evidence demonstrates a working single-query path through all three retrievers, but not consistently clean logs, broad retrieval relevance, or end-to-end Orchestrator routing.
+
+The following seven terminal screenshots are embedded **unchanged**, as requested:
+
+![Policy Agent command and start of the parallel dispatch](./images/policy-agent-test-screenshot-01.png)
+
+![Policy Agent retrieval output, first capture](./images/policy-agent-test-screenshot-02.png)
+
+![Policy Agent retrieval output, continuation](./images/policy-agent-test-screenshot-03.png)
+
+![Parallel retrieval completion trace and Returns retriever output](./images/policy-agent-test-screenshot-04.png)
+
+![Shipping and Warranty retriever output](./images/policy-agent-test-screenshot-05.png)
+
+![Policy Agent final coordinator answer, first capture](./images/policy-agent-test-screenshot-06.png)
+
+![Policy Agent final coordinator answer, repeated terminal capture](./images/policy-agent-test-screenshot-07.png)
+
+The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and integration with the application Orchestrator remain unverified. The Communication Agent, complete orchestrated workflow, AgentCore runtime deployment, and active runtime log emission are not yet implemented.
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -1081,10 +1154,10 @@ These are the decisions reflected in the current infrastructure or target design
 | Orders table key | `customer_id` partition key plus `order_id` sort key. | Supports listing one customer's orders and identifying one order using both key values. | Queries must follow this access pattern; this key does not make arbitrary order attributes searchable. |
 | Workflow state | One item per `session_id`, with a 24-hour TTL and version-based conditional updates. | Provides a shared durable record and prevents stale concurrent writes from silently overwriting newer state. | Create/read/update helpers and bounded conflict retries are implemented in source, but concurrent-write and TTL behavior have not been integration-tested. Expiration is asynchronous. |
 | Orders stream | `NEW_AND_OLD_IMAGES`. | Retains before-and-after item images for possible future event-driven processing. | A stream consumer is not implemented. Stream processing adds operational complexity and may incur additional charges. |
-| Policy storage | Regular S3 bucket for source documents; separate S3 Vectors bucket and one index per policy domain. All three KBs appear `Available`; direct retrieval probes return policy text for all three. | Keeps original documents separate from vector-search data and isolates policy domains. | Only one query per KB has been tried; ranking, coverage, and retrieval quality are not evaluated, and retrieval is not yet integrated into the Policy Agent workflow. |
+| Policy storage | Regular S3 bucket for source documents; separate S3 Vectors bucket and one index per policy domain. All three KBs appear `Available`; direct probes return policy text, and the Policy Agent has one combined-query smoke test. | Keeps original documents separate from vector-search data and isolates policy domains. | Ranking, coverage, and retrieval quality are not evaluated; Orchestrator-level routing remains unimplemented. |
 | Vector settings | `float32`, dimension `1024`, cosine distance, and `AMAZON_BEDROCK_TEXT` as non-filterable metadata. | Matches the intended embedding and retrieval configuration documented for this project. | Dimension must match the embedding model; evaluate retrieval quality with additional queries and verify configuration details as coverage expands. |
 | Naming | Prefix resource names with `ProjectName`; add account/stack-derived uniqueness to bucket names. | Gives resources a recognizable project identity while reducing global S3 name collisions. | AWS naming limits and uniqueness requirements still apply; generated names should be verified after deployment. |
-| Agent coordination | Inventory and Refund Agent builders are implemented; the Orchestrator and Policy/Communication builders remain unfinished. Policy retrieval is designed to be parallel. | Separates factual lookup, refund decisions, policy retrieval, and response generation into specialist roles. | Direct KB retrieval has only been smoke-tested outside the agents; the end-to-end orchestrator and worker integration are not implemented or tested. |
+| Agent coordination | Inventory, Refund, and Policy Agent builders are implemented; the Communication Agent and Orchestrator remain unfinished. The Policy Agent uses parallel retrieval. | Separates factual lookup, refund decisions, policy retrieval, and response generation into specialist roles. | The Policy Agent has one manual combined-query smoke test; broad relevance evaluation and end-to-end orchestrator integration are not implemented or tested. |
 | CloudWatch log retention | Dedicated log group with `RetentionInDays: 14`. | Keeps the planned AgentCore log destination explicit and limits how long log events are retained. | Retention controls stored log events, not whether logs are produced. Ingestion and retained data can incur charges; an empty log group is not proof of working runtime logging. |
 
 ## 13. Reliability and Failure Handling
@@ -1339,8 +1412,8 @@ The project is partially complete. The following status distinctions are importa
 
 ### Not Yet Implemented or Verified
 
-- Broad retrieval relevance/coverage testing and end-to-end agent-to-KB integration. The current evidence is one direct query per KB, returning 3 Returns, 2 Shipping, and 2 Warranty results; Warranty content is retrievable, but no explicit sync-completion screenshot is available.
-- Complete orchestrator and specialist-agent workflow. Inventory and Refund Agent builders are implemented, but Policy and Communication Agent construction and Orchestrator routing still contain TODOs.
+- Broad retrieval relevance/coverage testing and end-to-end routed agent-to-KB integration. Evidence includes one direct query per KB, returning 3 Returns, 2 Shipping, and 2 Warranty results, plus one combined Policy Agent query; Warranty content is retrievable, but no explicit sync-completion screenshot is available.
+- Complete orchestrator and specialist-agent workflow. Inventory, Refund, and Policy Agent builders are implemented, but Communication Agent construction and Orchestrator routing still contain TODOs.
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
 - Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source; smoke case D shows one successful update, but automated conditional-write and failure-path tests are still outstanding.
 - Refund smoke cases exercise prompt-level denial and approval with injected Workflow State facts. Focused automated tests, refreshed fixture data, and an end-to-end Inventory-to-Refund workflow test are still outstanding. Workflow State concurrency/TTL behavior also remains untested.

@@ -57,6 +57,7 @@ for _import_path in (_PROJECT_ROOT, _PACKAGE_DIR):
         sys.path.insert(0, _import_path)
 
 # Strands Agents SDK - see: https://github.com/strands-agents/sdk-python
+from botocore import model
 from strands import Agent
 from strands.models import BedrockModel
 from boto3.dynamodb.conditions import Key
@@ -482,28 +483,112 @@ def build_policy_agent() -> Agent:
     @tool
     def retrieve_returns_policy(query: str) -> str:
         """Retrieve relevant passages from the Returns Policy knowledge base."""
-        pass
+        if not config.RETURNS_KB_ID:
+            return "Returns Knowledge Base is not configured."
+
+        results = retrieve_from_knowledge_base(
+            kb_id=config.RETURNS_KB_ID,
+            query=query,
+            top_k=3,
+        )
+
+        if any(r.get("source") == "error" for r in results):
+            return "Returns policy retrieval failed: " + str(results)
+
+        return format_kb_results(results)
+
 
     # Create the ReturnsPolicyRetrieverAgent with the tool above
-    pass
+    returns_retriever = Agent(
+            name="ReturnsPolicyRetrieverAgent",
+            model=BedrockModel(
+                model_id=config.WORKER_MODEL_ID,
+                temperature=0.0,
+                region_name=config.AWS_REGION,
+            ),
+            system_prompt=(
+                "You are NovaMart's Returns Policy Retriever. "
+                "Always call retrieve_returns_policy to retrieve "
+                "relevant policy passages. Report the retrieved "
+                "policy evidence and source references accurately. "
+                "Do not invent or modify company policies."
+            ),
+            tools=[retrieve_returns_policy],
+        )
 
     # TODO: Build ShippingPolicyRetrieverAgent
     @tool
     def retrieve_shipping_policy(query: str) -> str:
         """Retrieve relevant passages from the Shipping Policy knowledge base."""
-        pass
+        if not config.SHIPPING_KB_ID:
+            return "Shipping Knowledge Base is not configured."
+
+        results = retrieve_from_knowledge_base(
+            kb_id=config.SHIPPING_KB_ID,
+            query=query,
+            top_k=3,
+        )
+
+        if any(r.get("source") == "error" for r in results):
+            return "Shipping policy retrieval failed: " + str(results)
+
+        return format_kb_results(results)
 
     # Create the ShippingPolicyRetrieverAgent with the tool above
-    pass
+    shipping_retriever = Agent(
+        name="ShippingPolicyRetrieverAgent",
+        model=BedrockModel(
+            model_id=config.WORKER_MODEL_ID,
+            temperature=0.0,
+            region_name=config.AWS_REGION,
+        ),
+        system_prompt=(
+            "You are NovaMart's Shipping Policy Retriever. "
+            "Always call retrieve_shipping_policy to retrieve "
+            "relevant shipping policies. Report shipping rates, "
+            "delivery terms, and customer benefits accurately. "
+            "Preserve source references. Never invent policies."
+        ),
+        tools=[retrieve_shipping_policy],
+    )
 
     # TODO: Build WarrantyPolicyRetrieverAgent
     @tool
     def retrieve_warranty_policy(query: str) -> str:
         """Retrieve relevant passages from the Warranty Policy knowledge base."""
-        pass
+        if not config.WARRANTY_KB_ID:
+            return "Warranty Knowledge Base is not configured."
+
+        results = retrieve_from_knowledge_base(
+            kb_id=config.WARRANTY_KB_ID,
+            query=query,
+            top_k=3,
+        )
+
+        if any(r.get("source") == "error" for r in results):
+            return "Warranty policy retrieval failed: " + str(results)
+
+        return format_kb_results(results)
+
+
 
     # Create the WarrantyPolicyRetrieverAgent with the tool above
-    pass
+    warranty_retriever = Agent(
+            name="WarrantyPolicyRetrieverAgent",
+            model=BedrockModel(
+                model_id=config.WORKER_MODEL_ID,
+                temperature=0.0,
+                region_name=config.AWS_REGION,
+            ),
+            system_prompt=(
+                "You are NovaMart's Warranty Policy Retriever. "
+                "Always call retrieve_warranty_policy to retrieve "
+                "warranty information. Report warranty periods, "
+                "coverage, exclusions, and claims procedures. "
+                "Preserve source references. Never invent policies."
+            ),
+            tools=[retrieve_warranty_policy],
+        )
 
     # TODO: Implement search_all_policies - parallel RAG retrieval tool
     @tool
@@ -522,7 +607,11 @@ def build_policy_agent() -> Agent:
         """
         # Build a dict mapping domain names to their retriever agents
         # e.g. {'Returns': returns_retriever, 'Shipping': shipping_retriever, ...}
-
+        retrievers = {
+            "Returns": returns_retriever,
+            "Shipping": shipping_retriever,
+            "Warranty": warranty_retriever,
+        }
         # ── Trace: show parallel KB dispatch to learners ──────────────────
         trace.kb_start({
             'Returns':  config.RETURNS_KB_ID,
@@ -544,27 +633,90 @@ def build_policy_agent() -> Agent:
             Results are returned as values and printed cleanly and
             sequentially by trace.kb_result() after all futures join.
             """
-            pass
+            try:
+                result = agent(query)
+                return domain, str(result)
+
+            except Exception as exc:
+                logger.exception(
+                    "Policy retrieval failed for %s", domain
+                )
+                return (
+                    domain,
+                    f"Retrieval failed for {domain}: {exc}"
+                )
+
+        results = {}
+
 
         # Use ThreadPoolExecutor to run all three retrievers in parallel
         # Collect results into a dict: {'Returns': '...', 'Shipping': '...', ...}
+        with ThreadPoolExecutor(max_workers=3) as executor:
 
+            futures = {
+                executor.submit(
+                    _run_retriever,
+                    domain,
+                    agent,
+                    query,
+                ): domain
+                for domain, agent in retrievers.items()
+            }
+            for future in as_completed(futures):
+                domain = futures[future]
+
+                try:
+                    result_domain, result_text = future.result()
+                    results[result_domain] = result_text
+
+                except Exception as exc:
+                    logger.exception(
+                        "Parallel retrieval failed for %s",
+                        domain,
+                    )
+                    results[domain] = (
+                        f"Retrieval failed for {domain}: {exc}"
+                    )
         # ── Trace: all KBs responded - print each result sequentially ─────
         # trace.kb_done(len(retrievers))
         # for domain in ['Returns', 'Shipping', 'Warranty']:
         #     trace.kb_result(domain, results.get(domain, '[No results]'))
-
+        trace.kb_done(len(retrievers))
+        for domain in ("Returns", "Shipping", "Warranty"):
+            trace.kb_result(domain, results.get(domain, "[No results]"))
         # Combine results from all three domains and return
-        pass
+        combined_results = []
+        for domain in ("Returns", "Shipping", "Warranty"):
+            combined_results.append(
+                f"=== {domain.upper()} POLICY ===\n"
+                f"{results.get(domain, 'No results available.')}"
+            )
+        return "\n\n".join(combined_results)
 
     # TODO: Create a BedrockModel for the PolicyAgent coordinator
-    pass
+    pmodel = BedrockModel( model_id=config.WORKER_MODEL_ID, region_name=config.AWS_REGION,temperature=0.2,)
 
     # TODO: System prompt for PolicyAgent coordinator
-    pass
+    system_prompt = """You are NovaMart's Policy Agent.
+    For every policy question, call search_all_policies exactly once with the
+    customer's question. It searches the returns, shipping and warranty policies
+    in parallel.
+
+    Answer only from the passages it returns. Say which policy each fact comes from
+    (returns, shipping or warranty), and include customer tier details such as the
+    30-day Standard and 60-day Premium return windows when they are relevant.
+    Never invent policies, numbers or exceptions. If the passages do not cover the
+    question, say so clearly.
+    """
+
 
     # TODO: Instantiate and return the PolicyAgent coordinator
-    pass
+    return Agent(
+        name="PolicyAgent",
+        model=pmodel,
+        system_prompt=system_prompt,
+        tools=[search_all_policies],
+    )
 
 
 # ───────────────────────────────────────────────────────
@@ -580,10 +732,12 @@ def build_communication_agent() -> Agent:
     """
 
     # TODO: Create a BedrockModel
-    pass
+    cmodel = BedrockModel( model_id=config.WORKER_MODEL_ID, region_name=config.AWS_REGION,temperature=0.2,)
 
     # TODO: System prompt for the Communication Agent
-    pass
+    system_prompt = """You are NovaMart's Communication Agent.
+    Compose a coherent, empathetic response based on the full WorkflowState.
+    """
 
     # TODO: Implement get_full_workflow_context
     @tool
