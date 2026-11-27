@@ -34,7 +34,7 @@ import config
 # Import the student's module once, at module scope, so every task suite
 # (not only Task 2) sees the same module and the same import errors.
 try:
-    import agent_orchestrator as ao
+    from multi_agent_ecommerce_rag import agent_orchestrator as ao
     _IMPORT_ERROR = None
 except Exception as _exc:              # noqa: BLE001 - report any failure
     ao = None
