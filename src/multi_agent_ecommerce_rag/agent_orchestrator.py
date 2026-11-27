@@ -732,11 +732,21 @@ def build_communication_agent() -> Agent:
     """
 
     # TODO: Create a BedrockModel
-    cmodel = BedrockModel( model_id=config.WORKER_MODEL_ID, region_name=config.AWS_REGION,temperature=0.2,)
+    cmodel = BedrockModel( model_id=config.WORKER_MODEL_ID, region_name=config.AWS_REGION,temperature=0.3,)
 
     # TODO: System prompt for the Communication Agent
     system_prompt = """You are NovaMart's Communication Agent.
-    Compose a coherent, empathetic response based on the full WorkflowState.
+    Always call get_full_workflow_context first, passing the session_id given in the
+    request, to read what the other agents found.
+
+    Compose one coherent, empathetic reply to the customer using only the facts in
+    the WorkflowState: order details, policy information and any refund decision.
+    - If a refund was approved, include the return reference number and the next steps.
+    - If a request was denied, explain the reason clearly and kindly, with the numbers used.
+    - If the policy agent found relevant policy, mention it in plain language.
+    Never invent order details, dates, policies or reference numbers. If something is
+    missing from the WorkflowState, say so instead of guessing. Keep it concise,
+    warm and professional.
     """
 
     # TODO: Implement get_full_workflow_context
@@ -751,10 +761,16 @@ def build_communication_agent() -> Agent:
         Returns:
             Full WorkflowState dict (inventory_agent, policy_agent, refund_agent)
         """
-        pass
+        state = _read_workflow_state(session_id) or {}
+        return json.loads(json.dumps(state, default=str))
 
     # TODO: Instantiate and return the Agent
-    pass
+    return Agent(
+        name="CommunicationAgent",
+        model=cmodel,
+        system_prompt=system_prompt,
+        tools=[get_full_workflow_context],
+    )
 
 
 # ───────────────────────────────────────────────────────
