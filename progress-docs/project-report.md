@@ -9,7 +9,7 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation. Inventory, Refund, and Policy Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI checks cover Inventory lookups, Refund Agent denial/approval paths, and one Policy Agent query across all three knowledge bases. The Policy Agent trace reported all three retrievers responding in 11.8 seconds; the captured output also has interleaved fragments and a duplicated final response, so output quality and broader behavior need follow-up. Communication Agent construction, orchestrator routing, the complete end-to-end workflow, and AgentCore runtime deployment remain incomplete.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation. Inventory, Refund, and Policy Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI checks cover Inventory lookups, Refund Agent denial/approval paths, and one Policy Agent query across all three knowledge bases. The Policy Agent trace reported all three retrievers responding in 11.8 seconds; the captured output also has interleaved fragments and a duplicated final response, so output quality and broader behavior need follow-up. The Communication Agent builder now includes a context tool that JSON-normalizes the full Workflow State. The Orchestrator now has a detailed routing prompt, state helpers, and a session-initialization tool, but its routing tools and final Agent construction remain TODOs; the complete workflow and AgentCore runtime are not complete.
 
 ## 1. Project Overview
 
@@ -526,7 +526,7 @@ RAG is useful because a foundation model should answer policy questions from pro
 
 The Policy Agent builder now issues parallel requests to the Returns, Shipping, and Warranty knowledge bases. Parallel fan-out can reduce wait time when multiple domains may be relevant; the builder and one combined-query smoke test are documented in Step 10. Broader retrieval-quality testing remains outstanding.
 
-The Inventory, Refund, and Policy Agent builders and Workflow State helpers are present in `agent_orchestrator.py`. The Communication Agent and Orchestrator Agent builders still contain TODOs, so the complete route through these agents is not yet implemented as a working system.
+The Inventory, Refund, Policy, and Communication Agent builder code and Workflow State helpers are present in `agent_orchestrator.py`. The Orchestrator now has a detailed six-rule system prompt, session/customer validation and state-update helpers, and an `initialize_session` tool. Its four routing-tool bodies and final Agent construction still contain TODOs, so the complete route through these agents is not yet implemented as a working system.
 
 The agent system is not a replacement for deterministic validation. Customer identifiers, order identifiers, refund amounts, stock quantities, and policy eligibility thresholds should still use explicit validation and tests.
 
@@ -1138,7 +1138,75 @@ The following seven terminal screenshots are embedded **unchanged**, as requeste
 
 ![Policy Agent final coordinator answer, repeated terminal capture](./images/policy-agent-test-screenshot-07.png)
 
-The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and integration with the application Orchestrator remain unverified. The Communication Agent, complete orchestrated workflow, AgentCore runtime deployment, and active runtime log emission are not yet implemented.
+### Step 11 — Communication Agent Workflow State Serialization
+
+The `get_full_workflow_context` tool inside `build_communication_agent()` reads the complete DynamoDB Workflow State so the Communication Agent can use findings from the earlier agents. DynamoDB numeric attributes such as `version` and `ttl` are returned by boto3 as `Decimal` values, which the JSON-based Strands tool interface cannot serialize directly. The tool now normalizes the state before returning it:
+
+```python
+@tool
+def get_full_workflow_context(session_id: str) -> dict:
+    state = _read_workflow_state(session_id) or {}
+    return json.loads(json.dumps(state, default=str))
+```
+
+The `default=str` handler converts values such as `Decimal` to strings during `json.dumps`; `json.loads` then returns an ordinary Python dictionary containing JSON-compatible values. Native JSON-compatible fields retain their JSON types. This follows the same serialization approach used by the Inventory tools.
+
+The Communication Agent prompt also now makes the arithmetic exception explicit: for pure arithmetic and shopping calculations, it must calculate from the numbers in the customer's request, even when Workflow State has no relevant facts, use full precision, and round currency to two decimal places only at the end. This aligns its instructions with the Orchestrator's arithmetic rule and avoids treating an empty Workflow State as a reason not to calculate. This prompt behavior has not been tested with a live agent invocation.
+
+Validation for this change was a Python syntax compilation and an isolated serialization check using `Decimal` values for `version`, `ttl`, and a nested numeric field. The assertion passed with those Decimal values represented as strings, and `git diff --check` passed. This check did not invoke the Communication Agent against live DynamoDB or verify a full Strands tool call.
+
+### Step 12 — Orchestrator Workflow Prompt and Session Helpers
+
+The Orchestrator now has a system prompt defining six routing rules for order status/history, account and membership questions, returns/refunds, policy questions, arithmetic, and final customer communication. It requires `initialize_session` as the first tool call, `route_to_communication_agent` as the last, and prohibits refund decisions without verified inventory facts. Arithmetic requests are explicitly accepted and sent directly to CommunicationAgent with the original question.
+
+Two local helpers prepare the shared-state workflow. `_require_state` verifies that the session exists and, when provided, that its stored customer ID matches the request. `_run_and_store` reads the current version, traces the worker call, stores its result using the existing optimistic-locking update helper, and traces completion:
+
+```python
+def _require_state(session_id: str, customer_id: str = "") -> dict:
+    state = _read_workflow_state(session_id)
+    if not state:
+        raise ValueError(
+            f"WorkflowState missing for session {session_id}. "
+            "Call initialize_session first."
+        )
+    if customer_id and state.get("customer_id") != customer_id:
+        raise ValueError(
+            "Customer ID does not match the initialized session.")
+    return state
+```
+
+```python
+state = _require_state(session_id, customer_id)
+expected_version = int(state["version"])
+trace.step_start(column)
+result_text = str(worker(prompt))
+_update_workflow_state(
+    session_id, {column: result_text}, expected_version
+)
+trace.step_done(column, expected_version)
+```
+
+The `initialize_session` tool rejects missing identifiers, creates a new Workflow State record, and handles an existing session by reusing it only after `_require_state` confirms the customer ID matches. Other DynamoDB client errors are re-raised:
+
+```python
+if not session_id or not customer_id:
+    raise ValueError("session_id and customer_id are required.")
+try:
+    _create_workflow_state(session_id, customer_id)
+    return f"WorkflowState initialized for session {session_id}."
+except ClientError as exc:
+    if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+        raise
+    current = _require_state(session_id, customer_id)
+    return (
+        f"WorkflowState already exists for session {session_id} "
+        f"(version {current['version']}); reusing it."
+    )
+```
+
+**TODOs intentionally remain:** the four `route_to_*` tool bodies and the final Orchestrator `Agent` construction are still placeholders. The new prompt and helpers describe and support the intended workflow, but do not yet make the routing rules executable end to end. Validation for this change is limited to Python syntax compilation; no live DynamoDB or agent-routing run was performed.
+
+The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and integration with the application Orchestrator remain unverified. The Communication Agent now has a builder and JSON-safe context tool, but its runtime behavior in the complete workflow, Orchestrator routing, AgentCore runtime deployment, and active runtime log emission remain unverified or unimplemented.
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -1157,7 +1225,7 @@ These are the decisions reflected in the current infrastructure or target design
 | Policy storage | Regular S3 bucket for source documents; separate S3 Vectors bucket and one index per policy domain. All three KBs appear `Available`; direct probes return policy text, and the Policy Agent has one combined-query smoke test. | Keeps original documents separate from vector-search data and isolates policy domains. | Ranking, coverage, and retrieval quality are not evaluated; Orchestrator-level routing remains unimplemented. |
 | Vector settings | `float32`, dimension `1024`, cosine distance, and `AMAZON_BEDROCK_TEXT` as non-filterable metadata. | Matches the intended embedding and retrieval configuration documented for this project. | Dimension must match the embedding model; evaluate retrieval quality with additional queries and verify configuration details as coverage expands. |
 | Naming | Prefix resource names with `ProjectName`; add account/stack-derived uniqueness to bucket names. | Gives resources a recognizable project identity while reducing global S3 name collisions. | AWS naming limits and uniqueness requirements still apply; generated names should be verified after deployment. |
-| Agent coordination | Inventory, Refund, and Policy Agent builders are implemented; the Communication Agent and Orchestrator remain unfinished. The Policy Agent uses parallel retrieval. | Separates factual lookup, refund decisions, policy retrieval, and response generation into specialist roles. | The Policy Agent has one manual combined-query smoke test; broad relevance evaluation and end-to-end orchestrator integration are not implemented or tested. |
+| Agent coordination | Inventory, Refund, and Policy Agent builders are implemented; the Communication Agent builder includes a JSON-safe Workflow State context tool. The Orchestrator has a routing prompt and session helpers, but its route tools and Agent assembly remain TODOs. | Separates factual lookup, refund decisions, policy retrieval, and response generation into specialist roles. | The Policy Agent has one manual combined-query smoke test; the Communication Agent context conversion has only an isolated serialization check; Orchestrator routing and end-to-end integration are not tested. |
 | CloudWatch log retention | Dedicated log group with `RetentionInDays: 14`. | Keeps the planned AgentCore log destination explicit and limits how long log events are retained. | Retention controls stored log events, not whether logs are produced. Ingestion and retained data can incur charges; an empty log group is not proof of working runtime logging. |
 
 ## 13. Reliability and Failure Handling
@@ -1406,14 +1474,14 @@ The project is partially complete. The following status distinctions are importa
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
 - Bedrock console configuration and status evidence for the Returns, Shipping, and Warranty Knowledge Bases is documented in section 9; these resources are not defined by the current CloudFormation template.
-- Python configuration and package code, including `.env` loading for manually configured KB IDs, the Inventory and Refund Agent builders, their prompts/tools, and Workflow State create/read/update helpers with optimistic locking; implementation details and validation limits are recorded in sections 7, 10, and 11.
+- Python configuration and package code, including `.env` loading for manually configured KB IDs; Inventory, Refund, Policy, and Communication Agent builders and their tools; Workflow State create/read/update helpers with optimistic locking; and the Orchestrator prompt, session helpers, and initialization tool. The Communication Agent context tool normalizes DynamoDB `Decimal` values before returning state; implementation details and validation limits are recorded in sections 7, 10, and 11.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
 
 ### Not Yet Implemented or Verified
 
 - Broad retrieval relevance/coverage testing and end-to-end routed agent-to-KB integration. Evidence includes one direct query per KB, returning 3 Returns, 2 Shipping, and 2 Warranty results, plus one combined Policy Agent query; Warranty content is retrievable, but no explicit sync-completion screenshot is available.
-- Complete orchestrator and specialist-agent workflow. Inventory, Refund, and Policy Agent builders are implemented, but Communication Agent construction and Orchestrator routing still contain TODOs.
+- Complete orchestrator and specialist-agent workflow. The Orchestrator prompt and session helpers are present, but its four routing-tool bodies and final Agent construction still contain TODOs; full Communication Agent behavior has not been verified through an end-to-end run.
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
 - Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source; smoke case D shows one successful update, but automated conditional-write and failure-path tests are still outstanding.
 - Refund smoke cases exercise prompt-level denial and approval with injected Workflow State facts. Focused automated tests, refreshed fixture data, and an end-to-end Inventory-to-Refund workflow test are still outstanding. Workflow State concurrency/TTL behavior also remains untested.

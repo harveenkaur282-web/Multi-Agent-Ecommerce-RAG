@@ -747,6 +747,10 @@ def build_communication_agent() -> Agent:
     Never invent order details, dates, policies or reference numbers. If something is
     missing from the WorkflowState, say so instead of guessing. Keep it concise,
     warm and professional.
+
+    If the request is a pure arithmetic or shopping calculation (prices, quantities,
+    discounts, totals), calculate it directly from the numbers in the customer's
+    request, using full precision and rounding currency to two decimals only at the end.
     """
 
     # TODO: Implement get_full_workflow_context
@@ -788,12 +792,125 @@ def build_orchestrator_agent(
     """
 
     # TODO: Create a BedrockModel using the ORCHESTRATOR model
-    pass
+    omodel = BedrockModel( model_id=config.ORCHESTRATOR_MODEL_ID, region_name=config.AWS_REGION,temperature=0.0,)
 
     # TODO: System prompt for the Orchestrator
     # For arithmetic, skip Inventory, Policy and Refund, but still call
     # CommunicationAgent last. Round currency only after the full calculation.
-    pass
+    system_prompt = """
+    You are NovaMart's OrchestratorAgent.
+
+    You coordinate four specialized worker agents:
+        - InventoryAgent
+        - PolicyAgent
+        - RefundAgent
+        - CommunicationAgent
+
+    Every customer request includes:
+    [Session ID: ...] and [Customer ID: ...].
+
+    Extract and preserve these identifiers when invoking tools.
+
+    MANDATORY WORKFLOW:
+        1. ALWAYS call initialize_session(session_id, customer_id) FIRST.
+        2. Route requests according to the six rules below.
+        3. Use the routing tools to read and update shared WorkflowState.
+        4. ALWAYS call route_to_communication_agent LAST.
+        5. Return the CommunicationAgent's final response without
+        generating an independent customer-facing response.
+
+    SIX MANDATORY ROUTING RULES:
+
+    RULE 1 - ORDER STATUS AND ORDER HISTORY:
+        - Route to InventoryAgent.
+        - Then route to CommunicationAgent.
+
+    RULE 2 - CUSTOMER ACCOUNT AND MEMBERSHIP QUESTIONS:
+        - Route to InventoryAgent.
+        - Then route to CommunicationAgent.
+        - Never route account-only questions to PolicyAgent.
+
+    RULE 3 - RETURNS AND REFUNDS:
+        - Route to InventoryAgent FIRST to verify order information.
+        - Then route to RefundAgent.
+        - Include PolicyAgent when policy details are necessary.
+        - Finish with CommunicationAgent.
+        - Never approve a refund without verified eligibility.
+
+    RULE 4 - SHIPPING, WARRANTY, AND RETURN POLICIES:
+        - Route general policy questions to PolicyAgent.
+        - Do not call InventoryAgent for policy-only questions.
+        - Finish with CommunicationAgent.
+
+    RULE 5 - ARITHMETIC AND SHOPPING CALCULATIONS:
+        - Arithmetic questions are VALID NovaMart customer requests.
+        - This includes product pricing, quantities, multiplication,
+        percentages, discounts, subtotals, and total calculations.
+        - Do NOT reject these requests.
+        - Do NOT call InventoryAgent, PolicyAgent, or RefundAgent.
+        - Route DIRECTLY to CommunicationAgent after initialize_session.
+        - Pass the original arithmetic question unchanged.
+        - CommunicationAgent performs the calculation accurately.
+        - Round currency to two decimal places at the end.
+
+    Example:
+    Customer: How much would 5 items at $29.99 be with a 10% discount?
+
+    Required tool sequence:
+    1. initialize_session
+    2. route_to_communication_agent
+
+    Expected calculation:
+    5 * 29.99 = 149.95
+    149.95 * 0.90 = 134.955
+    Final amount = $134.96
+
+    RULE 6 - FINAL CUSTOMER COMMUNICATION:
+        - Every request MUST finish with CommunicationAgent.
+        - CommunicationAgent is responsible for generating the
+        final customer-facing response.
+        - The Orchestrator must not independently compose the answer.
+        - Return only the CommunicationAgent's final response.
+
+    EXECUTION CONSTRAINTS:
+        - initialize_session must always be the first tool call.
+        - route_to_communication_agent must always be the last tool call.
+        - Never call RefundAgent before InventoryAgent.
+        - Never fabricate customer, order, policy, or refund information.
+        - Never approve refunds without verified eligibility.
+        - All worker findings must be stored in WorkflowState.
+        - Routing decisions must follow the six rules above.
+        - Never skip CommunicationAgent.
+    """
+
+    def _require_state(session_id: str, customer_id: str = "") -> dict:
+        state = _read_workflow_state(session_id)
+        if not state:
+            raise ValueError(
+                f"WorkflowState missing for session {session_id}. "
+                "Call initialize_session first."
+            )
+        if customer_id and state.get("customer_id") != customer_id:
+            raise ValueError(
+                "Customer ID does not match the initialized session.")
+        return state
+
+    def _run_and_store(
+        session_id: str,
+        column: str,
+        worker: Agent,
+        prompt: str,
+        customer_id: str = "",
+    ) -> str:
+        state = _require_state(session_id, customer_id)
+        expected_version = int(state["version"])
+        trace.step_start(column)
+        result_text = str(worker(prompt))
+        _update_workflow_state(
+            session_id, {column: result_text}, expected_version
+        )
+        trace.step_done(column, expected_version)
+        return result_text
 
     # Each routing tool follows the same pattern:
     #   1. read the current WorkflowState  (_read_workflow_state)
@@ -818,58 +935,94 @@ def build_orchestrator_agent(
         Returns:
             Inventory facts retrieved by the InventoryAgent
         """
-        pass
+        prompt = (
+            f"Session ID: {session_id}. Customer ID: {customer_id}. "
+            "Retrieve the order facts and customer tier as relevant. "
+            f"Customer request: {request}"
+        )
+        return _run_and_store(
+            session_id, "inventory_agent", inventory_agent,
+            prompt, customer_id
+        )
 
     # TODO: Implement route_to_policy_agent
     @tool
-    def route_to_policy_agent(session_id: str, request: str) -> str:
-        """
-        Route a policy question to the Policy Agent (multi-agent RAG).
-        Call this for questions about return policies, shipping, or warranties.
+    def route_to_policy_agent(
+        session_id: str, customer_id: str, request: str
+    ) -> str:
+        """Retrieve verified returns, shipping, and warranty policy evidence.
 
         Args:
-            session_id: The current session identifier
-            request:    The customer's policy question
-
-        Returns:
-            Policy information retrieved and synthesized by PolicyAgent
+            session_id: Current initialized session ID.
+            customer_id: Customer ID associated with the session.
+            request: Customer's policy question.
         """
-        pass
+        return _run_and_store(
+            session_id, "policy_agent", policy_agent,
+            f"Session ID: {session_id}. Customer ID: {customer_id}. "
+            f"Policy question: {request}",
+            customer_id
+        )
 
     # TODO: Implement route_to_refund_agent
     @tool
-    def route_to_refund_agent(session_id: str, customer_id: str, request: str) -> str:
-        """
-        Route a return/refund request to the Refund Agent.
-        Call this AFTER route_to_inventory_agent has gathered order facts.
+    def route_to_refund_agent(
+        session_id: str, customer_id: str, request: str
+    ) -> str:
+        """Evaluate a requested return after Inventory has recorded its facts.
 
         Args:
-            session_id:  The current session identifier
-            customer_id: The customer's unique identifier
-            request:     The return/refund request
-
-        Returns:
-            Refund decision from the RefundAgent
+            session_id: Current initialized session ID.
+            customer_id: Customer ID associated with the session.
+            request: Customer's return request, including the order ID.
         """
-        pass
+        state = _require_state(session_id, customer_id)
+        inventory_findings = state.get("inventory_agent")
+        if not inventory_findings:
+            return (
+                "Refund assessment not started: inventory findings are missing. "
+                "Call route_to_inventory_agent first."
+            )
+        prompt = (
+            f"Session ID: {session_id}. Customer ID: {customer_id}. "
+            f"Customer return request: {request}\n"
+            f"Inventory findings from WorkflowState:\n{inventory_findings}\n"
+            "Call get_inventory_context first. Initiate a return ONLY if "
+            "the order is verified eligible and the customer requested one."
+        )
+        return _run_and_store(
+            session_id, "refund_agent", refund_agent, prompt, customer_id
+        )
 
     # TODO: Implement route_to_communication_agent
     @tool
-    def route_to_communication_agent(session_id: str, customer_id: str,
-                                     original_request: str) -> str:
-        """
-        Route to the Communication Agent to compose the final customer response.
-        Call this LAST - after all relevant worker agents have run.
+    def route_to_communication_agent(
+        session_id: str, customer_id: str, original_request: str
+    ) -> str:
+        """Compose the final response using all available WorkflowState findings.
 
         Args:
-            session_id:       The current session identifier
-            customer_id:      The customer's unique identifier
-            original_request: The customer's original message
-
-        Returns:
-            Final customer-facing response drafted by CommunicationAgent
+            session_id: Current initialized session ID.
+            customer_id: Customer ID associated with the session.
+            original_request: Customer's original request, unchanged.
         """
-        pass
+        state = _require_state(session_id, customer_id)
+        prompt = (
+            f"Session ID: {session_id}. Customer ID: {customer_id}. "
+            f"Original customer request: {original_request}\n"
+            "Read full WorkflowState with get_full_workflow_context, "
+            "then write the final customer-facing answer. "
+            "If the request is arithmetic-only, calculate it directly "
+            "using full precision, rounding currency only at the end.\n"
+            "Current findings:\n"
+            f"Inventory: {state.get('inventory_agent', 'Not needed/not available')}\n"
+            f"Policy: {state.get('policy_agent', 'Not needed/not available')}\n"
+            f"Refund: {state.get('refund_agent', 'Not needed/not available')}"
+        )
+        return _run_and_store(
+            session_id, "communication_agent",
+            communication_agent, prompt, customer_id
+        )
 
     # TODO: Implement initialize_session
     @tool
@@ -885,10 +1038,33 @@ def build_orchestrator_agent(
         Returns:
             Confirmation that the session was initialized
         """
-        pass
+        if not session_id or not customer_id:
+            raise ValueError("session_id and customer_id are required.")
+        try:
+            _create_workflow_state(session_id, customer_id)
+            return f"WorkflowState initialized for session {session_id}."
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                raise
+            current = _require_state(session_id, customer_id)
+            return (
+                f"WorkflowState already exists for session {session_id} "
+                f"(version {current['version']}); reusing it."
+            )
 
     # TODO: Instantiate and return the OrchestratorAgent
-    pass
+    return Agent(
+        name="OrchestratorAgent",
+        model=omodel,
+        system_prompt=system_prompt,
+        tools=[
+            initialize_session,
+            route_to_inventory_agent,
+            route_to_policy_agent,
+            route_to_refund_agent,
+            route_to_communication_agent,
+        ],
+    )
 
 
 # ═══════════════════════════════════════════════════════
