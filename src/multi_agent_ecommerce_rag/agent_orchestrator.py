@@ -1191,7 +1191,108 @@ def create_guardrail() -> tuple[str, str]:
     # bedrock_client.create_guardrail_version(guardrailIdentifier=...)
     # and return (guardrail_id, guardrail_version).
 
-    pass
+    content_filters = [
+        {
+            "type": category,
+            "inputStrength": strength,
+            "outputStrength": strength,
+        }
+        for category, strength in [
+            ("SEXUAL", "HIGH"),
+            ("VIOLENCE", "HIGH"),
+            ("HATE", "HIGH"),
+            ("INSULTS", "MEDIUM"),
+            ("MISCONDUCT", "MEDIUM"),
+        ]
+    ]
+
+    pii_entities = [
+        {
+            "type": pii_type,
+            "action": action,
+        }
+        for pii_type, action in [
+            ("CREDIT_DEBIT_CARD_NUMBER", "BLOCK"),
+            ("US_SOCIAL_SECURITY_NUMBER", "BLOCK"),
+            ("EMAIL", "ANONYMIZE"),
+            ("PHONE", "ANONYMIZE"),
+        ]
+    ]
+
+    topic_definitions = {
+        "competitor products": (
+            "requests to recommend, advertise, compare, or promote "
+            "products sold by competing retailers."
+        ),
+        "pricing negotiations": (
+            "requests to haggle, bargain, or negotiate a novamart product's "
+            "advertised price. calculating a discount on an already stated "
+            "price is allowed and not part of this topic."
+        ),
+        "legal threats": (
+            "requests involving threats of lawsuits, litigation, or legal "
+            "action directed at novamart. ordinary customer complaints "
+            "without legal threats are not part of this denied topic."
+        ),
+    }
+
+    topics = [
+        {
+            "name": topic,
+            "definition": topic_definitions[topic],
+            "type": "DENY",
+        }
+        for topic in config.GUARDRAIL_BLOCKED_TOPICS
+    ]
+
+    response = bedrock_client.create_guardrail(
+        name=config.GUARDRAIL_NAME,
+        description=(
+            "novamart customer support safety, pii, and business policy "
+            "guardrail."
+        ),
+        contentPolicyConfig={
+            "filtersConfig": content_filters,
+        },
+        sensitiveInformationPolicyConfig={
+            "piiEntitiesConfig": pii_entities,
+        },
+        topicPolicyConfig={
+            "topicsConfig": topics,
+            "tierConfig": {
+                "tierName": "STANDARD"
+            },
+        },
+        wordPolicyConfig={
+            "managedWordListsConfig": [
+                {"type": "PROFANITY"}
+            ],
+        },
+        crossRegionConfig={
+            "guardrailProfileIdentifier": "us.guardrail.v1:0"
+        },
+        blockedInputMessaging=(
+            "Sorry, I cannot assist with that request. "
+            "Please ask about NovaMart orders, policies, "
+            "or customer support."
+        ),
+        blockedOutputsMessaging=(
+            "Sorry, I cannot provide that response. "
+            "Please contact NovaMart customer support."
+        ),
+    )
+
+    guardrail_id = response["guardrailId"]
+    print(f"Guardrail created: {guardrail_id}")
+
+    version_response = bedrock_client.create_guardrail_version(
+        guardrailIdentifier=guardrail_id,
+        description="initial novamart production guardrail",
+    )
+    guardrail_version = version_response["version"]
+    print(f"Guardrail version: {guardrail_version}")
+
+    return guardrail_id, guardrail_version
 
 
 def deploy_to_agentcore_runtime(

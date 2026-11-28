@@ -11,6 +11,8 @@
 
 > **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation. Inventory, Refund, and Policy Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI checks cover Inventory lookups, Refund Agent denial/approval paths, and one Policy Agent query across all three knowledge bases. The Policy Agent trace reported all three retrievers responding in 11.8 seconds; the captured output also has interleaved fragments and a duplicated final response, so output quality and broader behavior need follow-up. The Communication Agent builder now includes a context tool that JSON-normalizes the full Workflow State. The Orchestrator now has a routing prompt, state helpers, session initialization, four routing tools, and an Agent builder; the Task 2 checks reported 40/40 after correcting the test import path. The route ordering and full worker workflow have not been tested end to end, and the AgentCore runtime is not deployed.
 
+> **Task 3 update:** `create_guardrail()` has now created a Bedrock Guardrail and published version `1`, as shown in the terminal evidence below. Guardrail behavior and runtime deployment remain unverified.
+
 ## 1. Project Overview
 
 This project demonstrates the design and progressive infrastructure implementation of a multi-agent customer-support system for a fictional NovaMart e-commerce company.
@@ -673,7 +675,7 @@ This fixes a configuration issue where `load_dotenv` was imported but never call
 | `AGENTCORE_ROLE_ARN` | `AgentCoreRoleArn` export | Identify the execution role. |
 | `AGENT_LOG_GROUP` | `AgentLogGroup` export | Identify the CloudWatch log group. |
 | `RETURNS_KB_ID`, `SHIPPING_KB_ID`, `WARRANTY_KB_ID` | Environment variable first, then `{PROJECT_NAME}-ReturnsKbId`, `...-ShippingKbId`, or `...-WarrantyKbId` export | Optional IDs for manually created Knowledge Bases. The current CloudFormation template does not export these IDs; configure them separately for application use. |
-| `GUARDRAIL_ID`, `GUARDRAIL_VERSION` | Environment variable first, then optional corresponding export | Optional guardrail settings, not yet created/exported. |
+| `GUARDRAIL_ID`, `GUARDRAIL_VERSION` | Environment variable first, then optional corresponding export | Values returned by `create_guardrail()` must be configured here for `_apply_guardrail()` to attach the guardrail to the agent models. |
 
 When a lazy lookup succeeds, `__getattr__` stores stable resource values in the module's globals so subsequent access does not repeat the lookup. Knowledge Base and Guardrail values are deliberately not cached, allowing those optional values to reflect later environment changes during the process. Unknown names raise `AttributeError`, as expected for a Python module.
 
@@ -688,8 +690,8 @@ When a lazy lookup succeeds, `__getattr__` stores stable resource values in the 
 | `AGENTCORE_STACK_NAME` | Builds `AgentCore-{project}-default`. | Names the stack expected from the AgentCore CLI deployment. |
 | `MEMORY_NAMESPACE` | Combines `PROJECT_NAME` with `-memory`. | Human-readable namespace for the planned AgentCore Memory integration. |
 | `MEMORY_NAME` | Replaces hyphens in the namespace with underscores. | Produces an identifier compatible with the naming convention noted in the code. |
-| `GUARDRAIL_NAME` | Combines `PROJECT_NAME` with `-guardrail`. | Intended guardrail name; not proof that a guardrail exists. |
-| `GUARDRAIL_BLOCKED_TOPICS` | Fixed list: competitor products, pricing negotiations, and legal threats. | Proposed topics for future guardrail configuration; the list alone does not enforce a guardrail. |
+| `GUARDRAIL_NAME` | Combines `PROJECT_NAME` with `-guardrail`. | Name used by `create_guardrail()`; the Task 3 terminal capture confirms creation. |
+| `GUARDRAIL_BLOCKED_TOPICS` | Fixed list: competitor products, pricing negotiations, and legal threats. | Used to construct denied-topic definitions; the topics still need behavioral testing. |
 
 ### `print_config()` and Script Execution
 
@@ -1224,6 +1226,81 @@ The capture shows the misleading `0/0` output from the first run, followed by th
 
 The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and a live end-to-end Orchestrator workflow remain unverified. The Communication Agent now has a builder and JSON-safe context tool, while AgentCore runtime deployment and active runtime log emission remain unimplemented.
 
+### Task 3 — Bedrock Guardrail Creation and Attachment
+
+The Orchestrator file now defines `create_guardrail()`. It checks for an existing guardrail with the configured name before creating one. For a new guardrail, it configures input and output content filters, sensitive-information handling, denied topics, the managed profanity list, the Standard tier, and the `us.guardrail.v1:0` cross-region profile.
+
+The content filters use high strength for Sexual, Violence, and Hate categories and medium strength for Insults and Misconduct. The PII policy blocks credit/debit-card and U.S. Social Security numbers, and anonymizes email addresses and phone numbers:
+
+```python
+content_filters = [
+    {
+        "type": category,
+        "inputStrength": strength,
+        "outputStrength": strength,
+    }
+    for category, strength in [
+        ("SEXUAL", "HIGH"),
+        ("VIOLENCE", "HIGH"),
+        ("HATE", "HIGH"),
+        ("INSULTS", "MEDIUM"),
+        ("MISCONDUCT", "MEDIUM"),
+    ]
+]
+
+pii_entities = [
+    {"type": pii_type, "action": action}
+    for pii_type, action in [
+        ("CREDIT_DEBIT_CARD_NUMBER", "BLOCK"),
+        ("US_SOCIAL_SECURITY_NUMBER", "BLOCK"),
+        ("EMAIL", "ANONYMIZE"),
+        ("PHONE", "ANONYMIZE"),
+    ]
+]
+```
+
+Denied-topic definitions are built from `config.GUARDRAIL_BLOCKED_TOPICS`. In particular, the pricing definition denies bargaining over an advertised price while allowing arithmetic on a stated price:
+
+```python
+"pricing negotiations": (
+    "requests to haggle, bargain, or negotiate a novamart product's "
+    "advertised price. calculating a discount on an already stated "
+    "price is allowed and not part of this topic."
+)
+```
+
+After creation, the function publishes an immutable numbered version and returns both identifiers:
+
+```python
+guardrail_id = response["guardrailId"]
+version_response = bedrock_client.create_guardrail_version(
+    guardrailIdentifier=guardrail_id,
+    description="initial novamart production guardrail",
+)
+guardrail_version = version_response["version"]
+return guardrail_id, guardrail_version
+```
+
+The graph helper applies configured guardrail identifiers to each agent model that supports `update_config`; `build_agent_graph()` supplies Inventory, Refund, Policy, Communication, and Orchestrator agents:
+
+```python
+if not guardrail_id or not guardrail_version:
+    return
+for agent in agents:
+    model = getattr(agent, "model", None)
+    if model is not None and hasattr(model, "update_config"):
+        model.update_config(
+            guardrail_id=guardrail_id,
+            guardrail_version=guardrail_version,
+        )
+```
+
+The screenshot records a successful call to `create_guardrail()`: Bedrock returned guardrail ID `qtzmv9f7e3yl`, and the function published version `1`.
+
+![Task 3 terminal output showing Bedrock Guardrail creation and version 1](./images/task3-create-guardrail-success.png)
+
+This confirms resource creation and version publication only. No tests have yet verified that the configured filters block/anonymize the intended content, that allowed arithmetic passes, or that the guardrail is attached in a running agent graph. `_apply_guardrail()` depends on `GUARDRAIL_ID` and `GUARDRAIL_VERSION` being available through configuration, and AgentCore runtime deployment remains unimplemented.
+
 ## 12. Design Decisions and Tradeoffs
 
 ### Decision Log So Far
@@ -1484,12 +1561,14 @@ The project is partially complete. The following status distinctions are importa
 - The Returns observability panel showed zero invocations at capture time; the later CLI probes are separate from an end-user agent call.
 - `udacity-agentcore-agentcore-role` is visible in IAM with the `AgentCoreProjectPolicy` inline policy name and Bedrock / Bedrock AgentCore trusted-service principals.
 - CloudWatch log group `/aws/bedrock/agentcore/udacity-agentcore` is visible with a two-week retention setting; log-event ingestion by an application runtime is not yet verified.
+- A Bedrock Guardrail was created through `create_guardrail()` and version `1` was published; the terminal output is included in the Task 3 section. This is not a guardrail behavior or runtime-attachment test.
 
 ### Present in the Repository
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
 - Bedrock console configuration and status evidence for the Returns, Shipping, and Warranty Knowledge Bases is documented in section 9; these resources are not defined by the current CloudFormation template.
+- `create_guardrail()` creates or reuses the configured Bedrock Guardrail, sets content, PII, topic, and word policies, and publishes a numbered version. `_apply_guardrail()` attaches configured guardrail identifiers to supported agent models when `build_agent_graph()` constructs the five-agent graph.
 - Python configuration and package code, including `.env` loading for manually configured KB IDs; Inventory, Refund, Policy, and Communication Agent builders and their tools; Workflow State create/read/update helpers with optimistic locking; and the Orchestrator prompt, session helpers, routing tools, and Agent assembly. The Communication Agent context tool normalizes DynamoDB `Decimal` values before returning state; implementation details and validation limits are recorded in sections 7, 10, and 11.
 - Unit-test scaffold and UV dependency management.
 - Architecture diagrams and design notes.
@@ -1501,7 +1580,7 @@ The project is partially complete. The following status distinctions are importa
 - AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
 - Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source; smoke case D shows one successful update, but automated conditional-write and failure-path tests are still outstanding.
 - Refund smoke cases exercise prompt-level denial and approval with injected Workflow State facts. Focused automated tests, refreshed fixture data, and an end-to-end Inventory-to-Refund workflow test are still outstanding. Workflow State concurrency/TTL behavior also remains untested.
-- Bedrock Guardrails.
+- Guardrail input/output behavior tests, including allowed arithmetic, denied business topics, and PII block/anonymize cases. The creation call succeeded, but policy effectiveness and attachment through a running agent have not been verified.
 - Production least-privilege IAM review and any further role separation.
 - Runtime logging initialization and actual log ingestion, plus X-Ray observability.
 - End-to-end RAG evaluation.
