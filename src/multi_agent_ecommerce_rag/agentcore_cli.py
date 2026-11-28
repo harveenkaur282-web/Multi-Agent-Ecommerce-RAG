@@ -38,14 +38,14 @@ import shutil
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import config  # noqa: E402
 
 # ─────────────────────────────────────────────────────
 # PATHS
 # ─────────────────────────────────────────────────────
 SRC_DIR       = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT  = os.path.dirname(SRC_DIR)                       # starter/
+PROJECT_ROOT  = os.path.dirname(os.path.dirname(SRC_DIR))      # repository root
 AGENTCORE_DIR = os.path.join(PROJECT_ROOT, 'agentcore')        # CLI project config
 CONFIG_PATH   = os.path.join(AGENTCORE_DIR, 'agentcore.json')
 TARGETS_PATH  = os.path.join(AGENTCORE_DIR, 'aws-targets.json')
