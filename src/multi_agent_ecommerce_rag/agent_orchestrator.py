@@ -1401,16 +1401,20 @@ def configure_memory(runtime_arn: str) -> str:
             print(f"AgentCore Memory already exists: {memory_arn}")
             return memory_arn
 
-    # TODO: Create AgentCore Memory
-    # Use agentcore_control.create_memory() with:
-    #   - name (memory_name) and a description
-    #   - eventExpiryDuration = 7   (days)
-    #   - memoryStrategies = [{'summaryMemoryStrategy': {
-    #         'name': 'SessionSummary',
-    #         'namespaces': ['/summaries/{actorId}/{sessionId}']}}]
-    #   - clientToken (e.g. str(uuid.uuid4())) for idempotency
-    # Store the API response in `response`.
-    response = None
+    response = agentcore_control.create_memory(
+        name=memory_name,
+        description="Session-scoped conversational memory for the NovaMart multi-agent system",
+        eventExpiryDuration=7,
+        memoryStrategies=[
+            {
+                "summaryMemoryStrategy": {
+                    "name": "SessionSummary",
+                    "namespaces": ["/summaries/{actorId}/{sessionId}"],
+                }
+            }
+        ],
+        clientToken=str(uuid.uuid4()),
+    )
 
     if response is None:
         raise NotImplementedError("configure_memory: create_memory() not implemented")
@@ -1448,18 +1452,20 @@ def configure_observability(runtime_arn: str) -> None:
                           sampling percentage; runtime env AGENT_TRACING_ENABLED /
                           AGENT_TRACE_SAMPLING_RATE
     """
-    # TODO: Build the logging configuration
-    # logging_configuration = {
-    #     'cloudWatchConfig': {'logGroupName': config.AGENT_LOG_GROUP,
-    #                          'logLevel': 'INFO', 'enabled': True},
-    #     'xRayConfig':       {'enabled': True, 'samplingRate': 1.0},
-    # }
-    # Then apply it:  summary = apply_observability_config(runtime_arn, logging_configuration)
-    # Wrap the call in try/except - on success print the CloudWatch log group
-    # and the X-Ray sampling rate; on exception print
-    #   "[Note] Observability configuration failed: <e>"
-
-    pass
+    logging_configuration = {
+        "cloudWatchConfig": {
+            "logGroupName": config.AGENT_LOG_GROUP,
+            "logLevel": "INFO",
+            "enabled": True,
+        },
+        "xRayConfig": {"enabled": True, "samplingRate": 1.0},
+    }
+    try:
+        summary = apply_observability_config(runtime_arn, logging_configuration)
+        print(f"  CloudWatch log group: {config.AGENT_LOG_GROUP}")
+        print(f"  X-Ray sampling rate: {logging_configuration['xRayConfig']['samplingRate'] * 100:.0f}%")
+    except Exception as e:
+        print(f"[Note] Observability configuration failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════

@@ -1366,6 +1366,57 @@ if not runtime_arn:
 
 The function's existing TODO checklist comments remain in the source. As requested, this code has only been added; it has not been invoked, so there is no deployment or runtime-readiness result to report.
 
+#### Task 4 — AgentCore Memory configuration
+
+`configure_memory()` first checks for a resource with the configured memory name and reuses it if found. Otherwise, it creates a session-scoped memory with seven-day event retention and the `SessionSummary` strategy:
+
+```python
+response = agentcore_control.create_memory(
+    name=memory_name,
+    description="Session-scoped conversational memory for the NovaMart multi-agent system",
+    eventExpiryDuration=7,
+    memoryStrategies=[
+        {
+            "summaryMemoryStrategy": {
+                "name": "SessionSummary",
+                "namespaces": ["/summaries/{actorId}/{sessionId}"],
+            }
+        }
+    ],
+    clientToken=str(uuid.uuid4()),
+)
+```
+
+`name` identifies the memory resource, while `description` documents its role in the system. `eventExpiryDuration=7` sets event retention in days. The summary strategy stores session summaries under actor-and-session-specific namespaces, separating conversational context by customer actor and session. A UUID client token makes the create request idempotent if the same request is retried. The existing response check and polling loop remain: the function waits for `ACTIVE`, raises if the resource reaches `FAILED`, and returns its ARN.
+
+This is implemented code, not evidence that a Memory resource has been created or exercised; the runtime deployment path has not been run.
+
+#### Task 6 — Runtime observability configuration
+
+`configure_observability()` builds the CloudWatch and X-Ray settings and passes them to `apply_observability_config()`:
+
+```python
+logging_configuration = {
+    "cloudWatchConfig": {
+        "logGroupName": config.AGENT_LOG_GROUP,
+        "logLevel": "INFO",
+        "enabled": True,
+    },
+    "xRayConfig": {"enabled": True, "samplingRate": 1.0},
+}
+try:
+    summary = apply_observability_config(runtime_arn, logging_configuration)
+    print(f"  CloudWatch log group: {config.AGENT_LOG_GROUP}")
+    print(
+        f"  X-Ray sampling rate: "
+        f"{logging_configuration['xRayConfig']['samplingRate'] * 100:.0f}%"
+    )
+except Exception as e:
+    print(f"[Note] Observability configuration failed: {e}")
+```
+
+The CloudWatch block enables INFO-level logging to the configured AgentCore log group. The X-Ray block enables tracing with a `1.0` sampling rate (100%). On success, the helper reports the configured destination and sampling percentage. If applying these settings fails, the exception is reported as a note rather than propagated, so this optional setup does not stop deployment. The configuration is implemented but has not been exercised against a deployed runtime.
+
 ## 12. Design Decisions and Tradeoffs
 
 ### Decision Log So Far
@@ -1510,7 +1561,7 @@ Additional controls should include:
 
 ## 15. Observability
 
-The infrastructure creates a CloudWatch Logs log group for AgentCore. The runtime deployment helper and HTTP entry point are present, but no runtime has been deployed, so the log destination's existence does not prove that agent logs are being written. The template does not yet configure X-Ray infrastructure, though the IAM role contains X-Ray actions.
+The infrastructure creates a CloudWatch Logs log group for AgentCore. The runtime deployment helper and HTTP entry point are present, but no runtime has been deployed, so the log destination's existence does not prove that agent logs are being written. `configure_observability()` now applies CloudWatch and X-Ray settings through the AgentCore helper during deployment; the CloudFormation template itself does not configure X-Ray infrastructure, and runtime tracing has not been verified.
 
 ### CloudWatch Log Group
 
@@ -1530,7 +1581,7 @@ AgentLogGroup:
 | `LogGroupName` | `/aws/bedrock/agentcore/udacity-agentcore` | `!Sub` replaces `${ProjectName}` with the stack parameter. The path is a naming convention. |
 | `RetentionInDays` | `14` | CloudWatch Logs retains log events for 14 days, then deletes expired events. |
 
-The role includes log-writing permissions, the CloudFormation template exports this group name as `AgentLogGroupName`, and `config.py` can resolve it lazily as `config.AGENT_LOG_GROUP`. This connects the infrastructure value to configuration, but the application/runtime still needs to initialize logging and emit events. Do not imply the running agents already write here.
+The role includes log-writing permissions, the CloudFormation template exports this group name as `AgentLogGroupName`, and `config.py` can resolve it lazily as `config.AGENT_LOG_GROUP`. `configure_observability()` supplies this group to AgentCore and enables INFO logging when deployment is run. Since no runtime deployment has been verified, there is no evidence yet that the application has emitted events here.
 
 An empty log group has no log-event ingestion or stored log data yet, but it does not mean all CloudWatch resources or future logging are free. Ingestion, storage, and other features can incur charges. A finite retention period limits stored-event lifetime.
 
@@ -1540,7 +1591,7 @@ The log group was added in commit `a13c922`. The concept image explains the rela
 
 ![Deployed AgentCore log group and retention in CloudWatch](./images/agentcore-log-group-console.png)
 
-The broader planned observability stack may later combine:
+After runtime deployment and verification, the broader observability stack may be extended with:
 
 - Amazon CloudWatch metrics and logs.
 - AWS X-Ray distributed traces.
@@ -1633,6 +1684,7 @@ The project is partially complete. The following status distinctions are importa
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
 - AgentCore CLI configuration and CDK scaffold under `agentcore/`, plus the `agentcore_cli.py` helper, runtime staging code, and HTTP entry point. `deploy_to_agentcore_runtime()` now configures runtime environment variables, calls the CLI deploy command, reads the runtime ARN, and waits for readiness; it has not been run, and no AgentCore runtime has been deployed.
+- `configure_memory()` creates or reuses a seven-day, session-summary AgentCore Memory resource and waits for it to become active; `configure_observability()` applies CloudWatch INFO logging and 100% X-Ray sampling settings. These deployment helpers are implemented but have not been run against a deployed runtime.
 - Bedrock console configuration and status evidence for the Returns, Shipping, and Warranty Knowledge Bases is documented in section 9; these resources are not defined by the current CloudFormation template.
 - `create_guardrail()` creates or reuses the configured Bedrock Guardrail, sets content, PII, topic, and word policies, and publishes a numbered version. `_apply_guardrail()` attaches configured guardrail identifiers to supported agent models when `build_agent_graph()` constructs the five-agent graph.
 - Python configuration and package code, including `.env` loading for manually configured KB IDs; Inventory, Refund, Policy, and Communication Agent builders and their tools; Workflow State create/read/update helpers with optimistic locking; and the Orchestrator prompt, session helpers, routing tools, and Agent assembly. The Communication Agent context tool normalizes DynamoDB `Decimal` values before returning state; implementation details and validation limits are recorded in sections 7, 10, and 11.
@@ -1648,7 +1700,8 @@ The project is partially complete. The following status distinctions are importa
 - Refund smoke cases exercise prompt-level denial and approval with injected Workflow State facts. Focused automated tests, refreshed fixture data, and an end-to-end Inventory-to-Refund workflow test are still outstanding. Workflow State concurrency/TTL behavior also remains untested.
 - Broader guardrail validation: add output-filter and PII block/anonymize cases, make smoke-test failures produce a failing exit status, and verify guardrail enforcement through a running agent model. Current evidence is limited to five manual input-only cases.
 - Production least-privilege IAM review and any further role separation.
-- Runtime logging initialization and actual log ingestion, plus X-Ray observability.
+- Runtime logging initialization and actual log ingestion, plus verification of X-Ray traces and sampling behavior.
+- Creation and end-to-end use of the configured AgentCore Memory resource.
 - End-to-end RAG evaluation.
 
 This project is an **in-progress architecture and infrastructure implementation**, not a completed or production-ready multi-agent application. The diagrams and planned flows describe the target state. They must not be presented as evidence that the full system is already running.
