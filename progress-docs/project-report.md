@@ -11,7 +11,9 @@
 
 > **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation. Inventory, Refund, and Policy Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI checks cover Inventory lookups, Refund Agent denial/approval paths, and one Policy Agent query across all three knowledge bases. The Policy Agent trace reported all three retrievers responding in 11.8 seconds; the captured output also has interleaved fragments and a duplicated final response, so output quality and broader behavior need follow-up. The Communication Agent builder now includes a context tool that JSON-normalizes the full Workflow State. The Orchestrator now has a routing prompt, state helpers, session initialization, four routing tools, and an Agent builder; the Task 2 checks reported 40/40 after correcting the test import path. The route ordering and full worker workflow have not been tested end to end, and the AgentCore runtime is not deployed.
 
-> **Task 3 update:** `create_guardrail()` created a Bedrock Guardrail and published version `1`. A separate five-case, input-only smoke test printed `PASS` for two allowed requests and three blocked requests. Output filtering, PII behavior, and runtime deployment remain unverified.
+> **Task 3 update:** `create_guardrail()` created a Bedrock Guardrail and published version `1`. A separate five-case, input-only smoke test printed `PASS` for two allowed requests and three blocked requests. Output filtering and PII behavior remain unverified. The runtime deployment function is now implemented, but has not been run.
+
+> **Runtime status:** `deploy_to_agentcore_runtime()` now configures and invokes the AgentCore CLI. It has not been called, so no AgentCore runtime has been deployed.
 
 ## 1. Project Overview
 
@@ -1224,7 +1226,7 @@ The capture shows the misleading `0/0` output from the first run, followed by th
 
 **Remaining orchestration caveat:** the prompt requires CommunicationAgent to be called last, but that ordering is not enforced by a state-machine guard in the routing code. Session initialization is required for routes by `_require_state`, and the Refund route checks for Inventory findings, but the final-call ordering and full multi-agent sequence still need an integration test.
 
-The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and a live end-to-end Orchestrator workflow remain unverified. The Communication Agent now has a builder and JSON-safe context tool, while AgentCore runtime deployment and active runtime log emission remain unimplemented.
+The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and a live end-to-end Orchestrator workflow remain unverified. The Communication Agent now has a builder and JSON-safe context tool. AgentCore deployment code and an HTTP entry point exist, but the deployment function has not been run and active runtime log emission remains unverified.
 
 ### Task 3 — Bedrock Guardrail Creation and Attachment
 
@@ -1330,7 +1332,39 @@ The screenshot shows all five cases printing `PASS` in the captured run: two all
 
 ![Guardrail smoke-test source and terminal output showing five expected ALLOW/BLOCK results](./images/task3-guardrail-smoke-test.png)
 
-This is a manual, input-only smoke test, not a complete guardrail evaluation. The script prints `PASS` or `FAIL` but does not assert failures or exit nonzero when a case fails. It does not test output filtering, PII blocking/anonymization, or guardrail behavior through an agent model invocation. `_apply_guardrail()` also depends on `GUARDRAIL_ID` and `GUARDRAIL_VERSION` being available through configuration, and AgentCore runtime deployment remains unimplemented.
+This is a manual, input-only smoke test, not a complete guardrail evaluation. The script prints `PASS` or `FAIL` but does not assert failures or exit nonzero when a case fails. It does not test output filtering, PII blocking/anonymization, or guardrail behavior through an agent model invocation. `_apply_guardrail()` also depends on `GUARDRAIL_ID` and `GUARDRAIL_VERSION` being available through configuration.
+
+#### Runtime deployment code — implemented, not executed
+
+`deploy_to_agentcore_runtime()` now assembles the runtime environment, writes the runtime settings through `agentcore_cli.configure_runtime()`, invokes the AgentCore CLI deployment, reads the recorded ARN, and waits for the runtime to become `READY`:
+
+```python
+runtime_env = {
+    "AWS_REGION": config.AWS_REGION,
+    "PROJECT_NAME": config.PROJECT_NAME,
+    "RETURNS_KB_ID": config.RETURNS_KB_ID,
+    "SHIPPING_KB_ID": config.SHIPPING_KB_ID,
+    "WARRANTY_KB_ID": config.WARRANTY_KB_ID,
+    "AGENT_LOG_GROUP": config.AGENT_LOG_GROUP,
+    "GUARDRAIL_ID": guardrail_id,
+    "GUARDRAIL_VERSION": guardrail_version,
+}
+
+agentcore_cli.configure_runtime(
+    env_vars=runtime_env,
+    network_mode="PUBLIC",
+    protocol="HTTP",
+    execution_role_arn=config.AGENTCORE_ROLE_ARN,
+)
+agentcore_cli.deploy()
+runtime_arn = agentcore_cli.deployed_runtime_arn()
+if not runtime_arn:
+    raise RuntimeError(
+        "AgentCore CLI deployment completed but did not report a runtime ARN."
+    )
+```
+
+The function's existing TODO checklist comments remain in the source. As requested, this code has only been added; it has not been invoked, so there is no deployment or runtime-readiness result to report.
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -1476,7 +1510,7 @@ Additional controls should include:
 
 ## 15. Observability
 
-The infrastructure now creates a CloudWatch Logs log group for the planned AgentCore runtime. The log destination exists, but the application/runtime is not implemented, so this does not yet prove that agent logs are being written. The template does not yet configure X-Ray infrastructure, though the IAM role contains X-Ray actions.
+The infrastructure creates a CloudWatch Logs log group for AgentCore. The runtime deployment helper and HTTP entry point are present, but no runtime has been deployed, so the log destination's existence does not prove that agent logs are being written. The template does not yet configure X-Ray infrastructure, though the IAM role contains X-Ray actions.
 
 ### CloudWatch Log Group
 
@@ -1598,7 +1632,7 @@ The project is partially complete. The following status distinctions are importa
 ### Present in the Repository
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
-- AgentCore CLI configuration and CDK scaffold under `agentcore/`. Its deployment target list is empty, and its configured Python 3.12 runtime entry point/package are not yet present; no AgentCore runtime has been deployed.
+- AgentCore CLI configuration and CDK scaffold under `agentcore/`, plus the `agentcore_cli.py` helper, runtime staging code, and HTTP entry point. `deploy_to_agentcore_runtime()` now configures runtime environment variables, calls the CLI deploy command, reads the runtime ARN, and waits for readiness; it has not been run, and no AgentCore runtime has been deployed.
 - Bedrock console configuration and status evidence for the Returns, Shipping, and Warranty Knowledge Bases is documented in section 9; these resources are not defined by the current CloudFormation template.
 - `create_guardrail()` creates or reuses the configured Bedrock Guardrail, sets content, PII, topic, and word policies, and publishes a numbered version. `_apply_guardrail()` attaches configured guardrail identifiers to supported agent models when `build_agent_graph()` constructs the five-agent graph.
 - Python configuration and package code, including `.env` loading for manually configured KB IDs; Inventory, Refund, Policy, and Communication Agent builders and their tools; Workflow State create/read/update helpers with optimistic locking; and the Orchestrator prompt, session helpers, routing tools, and Agent assembly. The Communication Agent context tool normalizes DynamoDB `Decimal` values before returning state; implementation details and validation limits are recorded in sections 7, 10, and 11.
@@ -1609,7 +1643,7 @@ The project is partially complete. The following status distinctions are importa
 
 - Broad retrieval relevance/coverage testing and end-to-end routed agent-to-KB integration. Evidence includes one direct query per KB, returning 3 Returns, 2 Shipping, and 2 Warranty results, plus one combined Policy Agent query; Warranty content is retrievable, but no explicit sync-completion screenshot is available.
 - Complete orchestrator and specialist-agent workflow. The Orchestrator builder and routing tools are implemented, but the Communication-last rule is prompt-guided rather than programmatically enforced, and no end-to-end run has verified the full worker sequence.
-- AgentCore runtime entry point/package, deployment target configuration, and runtime deployment. The scaffold currently declares `agent_orchestrator.py` under `build/runtime/` and Python 3.12.
+- Actual AgentCore runtime deployment, readiness verification, and live invocation/logging checks. The deployment path is implemented but intentionally remains unexecuted.
 - Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source; smoke case D shows one successful update, but automated conditional-write and failure-path tests are still outstanding.
 - Refund smoke cases exercise prompt-level denial and approval with injected Workflow State facts. Focused automated tests, refreshed fixture data, and an end-to-end Inventory-to-Refund workflow test are still outstanding. Workflow State concurrency/TTL behavior also remains untested.
 - Broader guardrail validation: add output-filter and PII block/anonymize cases, make smoke-test failures produce a failing exit status, and verify guardrail enforcement through a running agent model. Current evidence is limited to five manual input-only cases.
