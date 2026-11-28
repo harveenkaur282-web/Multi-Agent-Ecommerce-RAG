@@ -108,6 +108,7 @@ def run(*args: str, capture: bool = False, check: bool = True) -> subprocess.Com
     env = dict(os.environ)
     env.setdefault('AWS_REGION', config.AWS_REGION)
     env.setdefault('AWS_DEFAULT_REGION', config.AWS_REGION)
+    env.setdefault('UV_LINK_MODE', 'copy')
     result = subprocess.run(
         [cli_path(), *args], cwd=PROJECT_ROOT, env=env,
         capture_output=capture, text=True,

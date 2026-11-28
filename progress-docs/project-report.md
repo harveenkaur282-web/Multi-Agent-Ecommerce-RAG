@@ -9,11 +9,11 @@
 **Stack name:** `udacity-agentcore`  
 **Project name:** `udacity-agentcore`
 
-> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; the overview shows `-` for Warranty's last-sync date, though a direct retrieval probe returned Warranty policy text. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation. Inventory, Refund, and Policy Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI checks cover Inventory lookups, Refund Agent denial/approval paths, and one Policy Agent query across all three knowledge bases. The Policy Agent trace reported all three retrievers responding in 11.8 seconds; the captured output also has interleaved fragments and a duplicated final response, so output quality and broader behavior need follow-up. The Communication Agent builder now includes a context tool that JSON-normalizes the full Workflow State. The Orchestrator now has a routing prompt, state helpers, session initialization, four routing tools, and an Agent builder; the Task 2 checks reported 40/40 after correcting the test import path. The route ordering and full worker workflow have not been tested end to end, and the AgentCore runtime is not deployed.
+> **Project status: In progress — not complete.** The three DynamoDB tables, policy-documents S3 bucket, S3 Vectors bucket, three vector indexes, AgentCore IAM role, and CloudWatch log group are visible in the AWS Console. The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings. Separate screenshots show completed source sync for Returns and Shipping; although the overview shows `-` for Warranty's last-sync date, the later AWS-backed all-task check found a completed ingestion job for all three KBs. Manual boto3 retrieval probes returned 3 Returns, 2 Shipping, and 2 Warranty results for one sample query per domain. These are smoke checks, not a relevance evaluation. Inventory, Refund, and Policy Agent builders, plus Workflow State helpers, are implemented in source. Manual CLI checks cover Inventory lookups, Refund Agent denial/approval paths, and one Policy Agent query across all three knowledge bases. The Policy Agent trace reported all three retrievers responding in 11.8 seconds; captured retrieval output contains interleaved fragments and duplicated content, so answer quality and broader behavior need follow-up. The Communication Agent builder now includes a context tool that JSON-normalizes the full Workflow State. The Orchestrator now has a routing prompt, state helpers, session initialization, four routing tools, and an Agent builder; Task 2 checks reported 40/40 after correcting the test import path. The AgentCore runtime is deployed and `READY`, with Memory `ACTIVE` and CloudWatch/X-Ray settings applied. One live CLI invocation returned a response, and the latest all-task run reported 120/120 points with a recent log stream and one recent trace; broader workflow, retrieval quality, and telemetry coverage remain outstanding.
 
-> **Task 3 update:** `create_guardrail()` created a Bedrock Guardrail and published version `1`. A separate five-case, input-only smoke test printed `PASS` for two allowed requests and three blocked requests. Output filtering and PII behavior remain unverified. The runtime deployment function is now implemented, but has not been run.
+> **Task 3 update:** `create_guardrail()` created a Bedrock Guardrail and published version `1`. A separate five-case, input-only smoke test printed `PASS` for two allowed requests and three blocked requests. Output filtering and PII behavior remain unverified. The runtime deployment function has since run successfully; deployment evidence and remaining runtime checks are documented below.
 
-> **Runtime status:** `deploy_to_agentcore_runtime()` now configures and invokes the AgentCore CLI. It has not been called, so no AgentCore runtime has been deployed.
+> **Runtime status:** `deploy_to_agentcore_runtime()` configures and invokes the AgentCore CLI. The runtime reached `READY`, and one live CLI invocation successfully returned a customer-facing answer; broader invocation coverage remains outstanding.
 
 ## 1. Project Overview
 
@@ -1226,7 +1226,7 @@ The capture shows the misleading `0/0` output from the first run, followed by th
 
 **Remaining orchestration caveat:** the prompt requires CommunicationAgent to be called last, but that ordering is not enforced by a state-machine guard in the routing code. Session initialization is required for routes by `_require_state`, and the Refund route checks for Inventory findings, but the final-call ordering and full multi-agent sequence still need an integration test.
 
-The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and a live end-to-end Orchestrator workflow remain unverified. The Communication Agent now has a builder and JSON-safe context tool. AgentCore deployment code and an HTTP entry point exist, but the deployment function has not been run and active runtime log emission remains unverified.
+The deployed resources and console-created Knowledge Bases are not a complete application. All three KBs are `Available`, and direct `retrieve()` smoke tests returned policy text for one query per domain; the Policy Agent builder has also been manually exercised with one combined query. Broad retrieval evaluation and a live end-to-end Orchestrator workflow remain unverified. The Communication Agent now has a builder and JSON-safe context tool. The AgentCore runtime is deployed and ready, and one live CLI invocation succeeded; active runtime log emission remains unverified.
 
 ### Task 3 — Bedrock Guardrail Creation and Attachment
 
@@ -1364,7 +1364,7 @@ if not runtime_arn:
     )
 ```
 
-The function's existing TODO checklist comments remain in the source. As requested, this code has only been added; it has not been invoked, so there is no deployment or runtime-readiness result to report.
+The function's existing TODO checklist comments remain in the source. A later deployment run completed successfully on 2026-11-28: the AgentCore CLI reported successful synthesis and deployment to the `default` target, and the runtime reached `READY`. This verifies deployment and readiness, but not a live customer invocation.
 
 #### Task 4 — AgentCore Memory configuration
 
@@ -1389,7 +1389,7 @@ response = agentcore_control.create_memory(
 
 `name` identifies the memory resource, while `description` documents its role in the system. `eventExpiryDuration=7` sets event retention in days. The summary strategy stores session summaries under actor-and-session-specific namespaces, separating conversational context by customer actor and session. A UUID client token makes the create request idempotent if the same request is retried. The existing response check and polling loop remain: the function waits for `ACTIVE`, raises if the resource reaches `FAILED`, and returns its ARN.
 
-This is implemented code, not evidence that a Memory resource has been created or exercised; the runtime deployment path has not been run.
+The successful deployment output confirms that the Memory resource was created and reached `ACTIVE`. This verifies resource creation, but not memory reads or writes during a live conversation.
 
 #### Task 6 — Runtime observability configuration
 
@@ -1415,7 +1415,41 @@ except Exception as e:
     print(f"[Note] Observability configuration failed: {e}")
 ```
 
-The CloudWatch block enables INFO-level logging to the configured AgentCore log group. The X-Ray block enables tracing with a `1.0` sampling rate (100%). On success, the helper reports the configured destination and sampling percentage. If applying these settings fails, the exception is reported as a note rather than propagated, so this optional setup does not stop deployment. The configuration is implemented but has not been exercised against a deployed runtime.
+The CloudWatch block enables INFO-level logging to the configured AgentCore log group. The X-Ray block enables tracing with a `1.0` sampling rate (100%). On success, the helper reports the configured destination and sampling percentage. If applying these settings fails, the exception is reported as a note rather than propagated, so this optional setup does not stop deployment. The successful run reported the configured log group and 100% sampling rate. This confirms configuration was applied; actual log-event ingestion and trace indexing remain unverified.
+
+#### Successful AgentCore deployment evidence
+
+The terminal captures show the deployment progressing through CDK synthesis and AWS deployment, then reporting the runtime `READY`, Memory `ACTIVE`, and observability configuration. The CLI also reported that CloudWatch Transaction Search was enabled and may take about 10 minutes before traces are fully indexed. The AgentCore Gateway step was skipped because no Lambda tool functions were configured; the rest of the deployment completed.
+
+![AgentCore runtime deployment steps and successful AWS deployment](./images/agentcore-runtime-deploy.png)
+
+![Runtime readiness and Memory becoming ACTIVE](./images/agentcore-memory-active.png)
+
+![Completed deployment with CloudWatch log group and X-Ray sampling rate](./images/agentcore-observability-configured.png)
+
+![Deployment completion and suggested runtime invocation command](./images/agentcore-deployment-complete.png)
+
+![Project configuration after deployment, including the runtime ARN](./images/agentcore-deployment-config-values.png)
+
+#### AWS Console confirmation
+
+The AWS console screenshots provide independent confirmation of the deployed resources. The AgentCore Agents page lists the runtime but shows no activity in the selected last-24-hours window. The Memory page shows the created resource as `Active`. The Bedrock Guardrails page shows the project guardrail as `Ready`. CloudFormation shows `AgentCore-udacity-default` and `udacity-agentcore` in `UPDATE_COMPLETE`, and `CDKToolkit` in `CREATE_COMPLETE`.
+
+![AgentCore Agents console listing the runtime with no activity in the selected period](./images/agentcore-agents-console.png)
+
+![AgentCore Memory console showing the memory resource as Active](./images/agentcore-memory-console.png)
+
+![Bedrock console showing the project Guardrail as Ready](./images/bedrock-guardrail-ready.png)
+
+![CloudFormation console showing completed AgentCore and infrastructure stacks](./images/agentcore-cloudformation-stacks.png)
+
+#### First deployed runtime invocation
+
+The CLI invoked the deployed runtime with the question, “What is the return policy for premium customers?” The response described the Premium tier's 60-day return window, eligibility thresholds, and benefits, and the command printed an X-Ray trace ID. This is a successful single-request smoke test; it does not verify the full multi-agent route sequence or confirm that the trace was ingested and indexed in AWS.
+
+![Deployed runtime invocation and beginning of the Premium return-policy response](./images/invoke-deployed-runtime-1.png)
+
+![Continuation of the response, including the printed trace ID](./images/invoke-deployed-runtime-2.png)
 
 ## 12. Design Decisions and Tradeoffs
 
@@ -1561,7 +1595,7 @@ Additional controls should include:
 
 ## 15. Observability
 
-The infrastructure creates a CloudWatch Logs log group for AgentCore. The runtime deployment helper and HTTP entry point are present, but no runtime has been deployed, so the log destination's existence does not prove that agent logs are being written. `configure_observability()` now applies CloudWatch and X-Ray settings through the AgentCore helper during deployment; the CloudFormation template itself does not configure X-Ray infrastructure, and runtime tracing has not been verified.
+The infrastructure creates a CloudWatch Logs log group for AgentCore. An AgentCore Runtime has now been deployed and reached `READY`, and live CLI invocations have returned responses. `configure_observability()` applied CloudWatch and X-Ray settings through the AgentCore helper: the deployment output reported the configured log group, 100% X-Ray sampling, and Transaction Search enabled. The later AWS-backed all-task run found a recent agent log stream and one NovaMart trace in the last six hours. This confirms telemetry arrived during the sampled period, but does not establish complete coverage across requests or agents. The CloudFormation template itself does not configure X-Ray infrastructure.
 
 ### CloudWatch Log Group
 
@@ -1581,20 +1615,20 @@ AgentLogGroup:
 | `LogGroupName` | `/aws/bedrock/agentcore/udacity-agentcore` | `!Sub` replaces `${ProjectName}` with the stack parameter. The path is a naming convention. |
 | `RetentionInDays` | `14` | CloudWatch Logs retains log events for 14 days, then deletes expired events. |
 
-The role includes log-writing permissions, the CloudFormation template exports this group name as `AgentLogGroupName`, and `config.py` can resolve it lazily as `config.AGENT_LOG_GROUP`. `configure_observability()` supplies this group to AgentCore and enables INFO logging when deployment is run. Since no runtime deployment has been verified, there is no evidence yet that the application has emitted events here.
+The role includes log-writing permissions, the CloudFormation template exports this group name as `AgentLogGroupName`, and `config.py` can resolve it lazily as `config.AGENT_LOG_GROUP`. `configure_observability()` supplied this group to AgentCore and enabled INFO logging during deployment. The latest all-task check found a recent agent log stream, confirming that runtime events have reached CloudWatch; sustained ingestion and log-content quality still need evaluation.
 
-An empty log group has no log-event ingestion or stored log data yet, but it does not mean all CloudWatch resources or future logging are free. Ingestion, storage, and other features can incur charges. A finite retention period limits stored-event lifetime.
+An empty log group would have no log-event ingestion or stored log data, but it would not mean all CloudWatch resources or future logging are free. Ingestion, storage, and other features can incur charges. A finite retention period limits stored-event lifetime.
 
-The log group was added in commit `a13c922`. The concept image explains the relationship between groups and streams; the console image directly below is evidence of the deployed log group and its 14-day retention. Neither proves that an application has emitted events.
+The log group was added in commit `a13c922`. The concept image explains the relationship between groups and streams; the console image directly below is evidence of the deployed log group and its 14-day retention. The all-task check below separately confirms recent event ingestion.
 
 ![CloudWatch log-group concept](./images/cloudwatch-log-group-explainer.png)
 
 ![Deployed AgentCore log group and retention in CloudWatch](./images/agentcore-log-group-console.png)
 
-After runtime deployment and verification, the broader observability stack may be extended with:
+The runtime has CloudWatch and X-Ray configuration, with a recent log stream and trace observed in the latest check. Further observability work may include:
 
-- Amazon CloudWatch metrics and logs.
-- AWS X-Ray distributed traces.
+- CloudWatch metrics and dashboards beyond the configured log stream.
+- Additional X-Ray service-map annotations and trace analysis.
 - Agent invocation IDs.
 - Session IDs.
 - Specialist-agent latency.
@@ -1660,6 +1694,26 @@ Tests should cover implementation and infrastructure at several levels:
 - Customer-facing tone.
 - Latency and cost per sample request.
 
+### Latest all-task validation — 2026-11-28
+
+The captured `python tests/test_agent.py all` run reports **120/120 points (100%)** across Tasks 2–6. Task 2 checks agent construction, tool counts, and configured models. The AWS-backed Task 3–6 checks verify the guardrail and runtime, Memory status and strategy, Knowledge Base configuration and retrieval, and CloudWatch/X-Ray configuration. This run also found a recent log stream and one NovaMart trace in the last six hours.
+
+The run confirms the tested configuration and basic retrieval path, not production readiness or answer quality. The terminal output contains interleaved and duplicated retrieval fragments; the score checks configured resources and non-empty retrieval results rather than evaluating groundedness, formatting, or full Orchestrator routing.
+
+![All-task run: orchestration checks, runtime readiness, guardrail, and Memory](./images/validation-task2-task4.png)
+
+![All-task run: Knowledge Base status, embedding model, and sync checks](./images/validation-knowledge-bases.png)
+
+![All-task run: combined policy retrieval output, first segment](./images/validation-rag-output-1.png)
+
+![All-task run: combined policy retrieval output, second segment](./images/validation-rag-output-2.png)
+
+![All-task run: parallel retriever results](./images/validation-parallel-retrievers.png)
+
+![All-task run: CloudWatch log stream and X-Ray configuration](./images/validation-observability.png)
+
+![All-task run: one recent X-Ray trace and final score of 120 out of 120](./images/validation-score-120.png)
+
 ## 17. Current Scope and Future Work
 
 The project is partially complete. The following status distinctions are important:
@@ -1673,18 +1727,25 @@ The project is partially complete. The following status distinctions are importa
 - Returns vector index overview shows dimension `1024` and cosine distance metric.
 - The Bedrock Knowledge Base overview lists Returns, Shipping, and Warranty as `Available`, each with one data source and zero last-sync warnings.
 - Direct `retrieve()` smoke tests returned 3 Returns, 2 Shipping, and 2 Warranty results with excerpts from the corresponding policy content. This demonstrates basic retrieval for one sample query per KB, not retrieval quality or complete document coverage.
-- The overview's `Last sync date` is `-` for each KB. Separate screenshots show completed source sync for Returns and Shipping; Warranty has no explicit sync-completion screenshot, though its policy content was returned by the direct retrieval probe.
-- The Returns observability panel showed zero invocations at capture time; the later CLI probes are separate from an end-user agent call.
+- The overview's `Last sync date` is `-` for each KB. Separate screenshots show completed source sync for Returns and Shipping; the latest all-task check found a completed ingestion job for all three KBs, including Warranty.
+- The Returns observability panel showed zero invocations at capture time; a later live CLI invocation is documented below.
+- AgentCore Runtime `udacity_agentcore_runtime` was deployed to the `default` target in stack `AgentCore-udacity-default`; the CLI output confirms the runtime reached `READY`. A later live CLI invocation successfully returned a Premium return-policy answer, documented below.
+- The AgentCore console lists the deployed runtime; its usage panel showed no activity in the selected last-24-hours window at capture time. A later CLI invocation successfully returned a Premium return-policy answer, as shown below.
+- The configured AgentCore Memory resource was created and reached `ACTIVE`; the console also displays it as `Active`. Memory behavior through a live conversation remains untested.
+- Runtime observability configuration completed for `/aws/bedrock/agentcore/udacity-agentcore` with INFO logging and 100% X-Ray sampling. The latest all-task check found a recent log stream and one NovaMart trace in the last six hours; ongoing coverage and trace quality are not evaluated.
+- AgentCore Gateway deployment was skipped because no Lambda tool function names were configured.
+- The Bedrock console shows the project Guardrail in `Ready` status; this does not verify its behavior on a runtime request.
+- CloudFormation shows `AgentCore-udacity-default` and `udacity-agentcore` as `UPDATE_COMPLETE`, and `CDKToolkit` as `CREATE_COMPLETE`.
 - `udacity-agentcore-agentcore-role` is visible in IAM with the `AgentCoreProjectPolicy` inline policy name and Bedrock / Bedrock AgentCore trusted-service principals.
-- CloudWatch log group `/aws/bedrock/agentcore/udacity-agentcore` is visible with a two-week retention setting; log-event ingestion by an application runtime is not yet verified.
+- CloudWatch log group `/aws/bedrock/agentcore/udacity-agentcore` is visible with a two-week retention setting; the latest all-task check found a recent log stream, though sustained ingestion still needs validation.
 - A Bedrock Guardrail was created through `create_guardrail()` and version `1` was published; the terminal output is included in the Task 3 section. This is not a guardrail behavior or runtime-attachment test.
 - The manual [smoke_guardrail.py](../smoke_guardrail.py) run printed the expected action for five input cases: two ALLOW and three BLOCK. It does not cover output filtering or PII handling, and its printed results are not enforced as process failures.
 
 ### Present in the Repository
 
 - CloudFormation definitions for the S3 policy-document bucket, S3 Vectors bucket, three indexes, AgentCore execution role with its trust and permissions policies, and CloudWatch log group; the template passes `cfn-lint`.
-- AgentCore CLI configuration and CDK scaffold under `agentcore/`, plus the `agentcore_cli.py` helper, runtime staging code, and HTTP entry point. `deploy_to_agentcore_runtime()` now configures runtime environment variables, calls the CLI deploy command, reads the runtime ARN, and waits for readiness; it has not been run, and no AgentCore runtime has been deployed.
-- `configure_memory()` creates or reuses a seven-day, session-summary AgentCore Memory resource and waits for it to become active; `configure_observability()` applies CloudWatch INFO logging and 100% X-Ray sampling settings. These deployment helpers are implemented but have not been run against a deployed runtime.
+- AgentCore CLI configuration and CDK scaffold under `agentcore/`, plus the `agentcore_cli.py` helper, runtime staging code, and HTTP entry point. `deploy_to_agentcore_runtime()` configures runtime environment variables, calls the CLI deploy command, reads the runtime ARN, and waits for readiness; the deployment has now completed and the runtime reached `READY`.
+- `configure_memory()` creates or reuses a seven-day, session-summary AgentCore Memory resource and waits for it to become active; deployment output confirms the resource became `ACTIVE`. `configure_observability()` applied CloudWatch INFO logging and 100% X-Ray sampling settings. See the deployment evidence above.
 - Bedrock console configuration and status evidence for the Returns, Shipping, and Warranty Knowledge Bases is documented in section 9; these resources are not defined by the current CloudFormation template.
 - `create_guardrail()` creates or reuses the configured Bedrock Guardrail, sets content, PII, topic, and word policies, and publishes a numbered version. `_apply_guardrail()` attaches configured guardrail identifiers to supported agent models when `build_agent_graph()` constructs the five-agent graph.
 - Python configuration and package code, including `.env` loading for manually configured KB IDs; Inventory, Refund, Policy, and Communication Agent builders and their tools; Workflow State create/read/update helpers with optimistic locking; and the Orchestrator prompt, session helpers, routing tools, and Agent assembly. The Communication Agent context tool normalizes DynamoDB `Decimal` values before returning state; implementation details and validation limits are recorded in sections 7, 10, and 11.
@@ -1693,15 +1754,15 @@ The project is partially complete. The following status distinctions are importa
 
 ### Not Yet Implemented or Verified
 
-- Broad retrieval relevance/coverage testing and end-to-end routed agent-to-KB integration. Evidence includes one direct query per KB, returning 3 Returns, 2 Shipping, and 2 Warranty results, plus one combined Policy Agent query; Warranty content is retrievable, but no explicit sync-completion screenshot is available.
+- Broad retrieval relevance/coverage testing and end-to-end routed agent-to-KB integration. The latest all-task check found completed ingestion jobs and retrieved passages from all three KBs, plus one combined Policy Agent result; it does not measure retrieval relevance or answer quality.
 - Complete orchestrator and specialist-agent workflow. The Orchestrator builder and routing tools are implemented, but the Communication-last rule is prompt-guided rather than programmatically enforced, and no end-to-end run has verified the full worker sequence.
-- Actual AgentCore runtime deployment, readiness verification, and live invocation/logging checks. The deployment path is implemented but intentionally remains unexecuted.
+- Broader live invocation coverage and end-to-end worker-routing tests; one CLI invocation succeeded, but does not exercise every route.
 - Workflow State helpers and the Refund Agent's conditional DynamoDB return mutation exist in source; smoke case D shows one successful update, but automated conditional-write and failure-path tests are still outstanding.
 - Refund smoke cases exercise prompt-level denial and approval with injected Workflow State facts. Focused automated tests, refreshed fixture data, and an end-to-end Inventory-to-Refund workflow test are still outstanding. Workflow State concurrency/TTL behavior also remains untested.
 - Broader guardrail validation: add output-filter and PII block/anonymize cases, make smoke-test failures produce a failing exit status, and verify guardrail enforcement through a running agent model. Current evidence is limited to five manual input-only cases.
 - Production least-privilege IAM review and any further role separation.
-- Runtime logging initialization and actual log ingestion, plus verification of X-Ray traces and sampling behavior.
-- Creation and end-to-end use of the configured AgentCore Memory resource.
+- Broader runtime telemetry validation across representative requests and agents. The latest check found one recent log stream and one trace, but does not establish sustained coverage or trace quality.
+- End-to-end use of the configured AgentCore Memory resource in a live conversation.
 - End-to-end RAG evaluation.
 
 This project is an **in-progress architecture and infrastructure implementation**, not a completed or production-ready multi-agent application. The diagrams and planned flows describe the target state. They must not be presented as evidence that the full system is already running.
